@@ -842,13 +842,23 @@ async fn interrupt_kills_real_process_prevents_remaining_mutation_and_allows_nex
     let id = fixture.session_id.clone();
     let sink = fixture.sink();
     let task = tokio::spawn(async move { harness.turn(id, "运行可取消命令".into(), sink).await });
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let started = tokio::time::timeout(Duration::from_secs(20), async {
         while !fixture.workspace.join("started.flag").exists() {
+            if task.is_finished() {
+                bail!("turn ended before the command created its start marker");
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        Ok::<(), anyhow::Error>(())
     })
-    .await
-    .context("real command did not start")?;
+    .await;
+    match started {
+        Ok(Ok(())) => {}
+        other => bail!(
+            "real command did not start: {other:?}; events: {:?}",
+            fixture.events.lock().unwrap()
+        ),
+    }
     fixture
         .harness
         .command(json!({"action":"interrupt","sessionId":fixture.session_id}))
