@@ -834,7 +834,7 @@ async fn repeated_tool_loop_stops_at_its_documented_step_budget_and_saves_result
 async fn interrupt_kills_real_process_prevents_remaining_mutation_and_allows_next_turn(
 ) -> Result<()> {
     let model=MockModel::start(|index,_|if index==0 {calls(vec![
-        function("long-command","terminal_run",json!({"command":if cfg!(windows){"Set-Content -Path started.flag -Value started; Start-Sleep -Seconds 20"}else{"printf started > started.flag; sleep 20"},"timeout_ms":30000})),
+        function("long-command","terminal_run",json!({"command":if cfg!(windows){"[Console]::Out.Write('harness-process-started'); [Console]::Out.Flush(); Start-Sleep -Seconds 20"}else{"printf harness-process-started; sleep 20"},"timeout_ms":30000})),
         function("late-write","file_write",json!({"path":"must-not-exist.txt","content":"late side effect","expected_sha256":null})),
     ])}else{answer("已恢复下一轮。")}).await?;
     let fixture = Fixture::new(&model, 65536).await?;
@@ -843,9 +843,20 @@ async fn interrupt_kills_real_process_prevents_remaining_mutation_and_allows_nex
     let sink = fixture.sink();
     let task = tokio::spawn(async move { harness.turn(id, "运行可取消命令".into(), sink).await });
     let started = tokio::time::timeout(Duration::from_secs(20), async {
-        while !fixture.workspace.join("started.flag").exists() {
+        loop {
+            let output: String = fixture
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event["type"] == "tool_output" && event["callId"] == "long-command")
+                .filter_map(|event| event["text"].as_str())
+                .collect();
+            if output.contains("harness-process-started") {
+                break;
+            }
             if task.is_finished() {
-                bail!("turn ended before the command created its start marker");
+                bail!("turn ended before the command produced its start marker");
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
