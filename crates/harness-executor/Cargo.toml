@@ -16,5 +16,8 @@ tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 
+[target.'cfg(windows)'.dependencies]
+dunce = "1.0.5"
+
 [dev-dependencies]
 tempfile = "3"

@@ -603,9 +603,24 @@ impl Executor {
         let stdout_path = self.artifact_dir.join(format!("{id}-stdout.txt"));
         let stderr_path = self.artifact_dir.join(format!("{id}-stderr.txt"));
         let mut command = Command::new(program);
+        // Windows canonicalization produces verbatim paths. PowerShell's
+        // filesystem provider cannot reliably resolve relative paths from
+        // those directories, so use the equivalent ordinary path when safe.
+        #[cfg(windows)]
+        let process_workspace = {
+            let path = dunce::simplified(&self.workspace);
+            if program.eq_ignore_ascii_case("powershell.exe")
+                && path.as_os_str().to_string_lossy().starts_with(r"\\?\")
+            {
+                bail!("PowerShell cannot safely use this workspace path; choose a local path that does not require a Windows verbatim path");
+            }
+            path
+        };
+        #[cfg(not(windows))]
+        let process_workspace = self.workspace.as_path();
         command
             .args(args)
-            .current_dir(&self.workspace)
+            .current_dir(process_workspace)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1763,6 +1778,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["cancelled"], true);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn powershell_relative_paths_are_in_the_selected_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let result = executor
+            .execute(
+                "terminal_run",
+                json!({"command":"$ErrorActionPreference='Stop'; Set-Content -LiteralPath marker.txt -Value workspace -Encoding Ascii"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result["exit_code"], 0,
+            "unexpected command result: {result}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("marker.txt"))
+                .unwrap()
+                .trim(),
+            "workspace"
+        );
     }
 
     #[tokio::test]
