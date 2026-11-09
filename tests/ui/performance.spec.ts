@@ -107,7 +107,9 @@ test('local and MCP uncertain results require observation while remote results o
     events.push({ type: 'tool_started', callId, name, deviceId, arguments: '{}' }, { type: 'tool_completed', callId, name, deviceId, result: { isError: true, indeterminate: true, operationId: `TEST_FIXTURE_${callId}` }, durationMs: 1 });
   }
   await emit(page, events); await finish(page, 'failed');
-  for (const card of await page.locator('.tool-card').all()) await card.locator('summary').click();
+  const cards = page.locator('.tool-card');
+  await expect(cards).toHaveCount(3);
+  for (const card of await cards.all()) await card.locator('summary').click();
   await expect(page.getByText('动作可能已发生；请重新观察实际状态后继续。', { exact: true })).toHaveCount(2);
   await expect(page.getByRole('button', { name: '查询远端执行状态', exact: true })).toHaveCount(1);
   expect((await ipcCalls(page)).some(call => (call.args.request as Json | undefined)?.action === 'remote_operation_status')).toBe(false);
