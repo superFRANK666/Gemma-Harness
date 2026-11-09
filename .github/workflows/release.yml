@@ -39,7 +39,7 @@ jobs:
           cache: npm
       - name: Install Linux development libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libdbus-1-dev libpipewire-0.3-dev libxtst-dev
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libdbus-1-dev libpipewire-0.3-dev libxtst-dev libfuse2t64
       - run: npm ci
       - run: npm run setup:workers
       - name: Build installer

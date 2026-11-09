@@ -17,7 +17,7 @@
 | Windows x64 | `Windows-x64-setup.exe` 或 `Windows-x64.msi` |
 | Linux x64 | Debian／Ubuntu 使用 `.deb`；其他兼容环境可尝试 `.AppImage` |
 
-文件名前缀包含应用名称和版本，`SHA256SUMS` 可用于校验下载。macOS 包未经 Apple Developer ID 签名或公证，Windows 包未经 Authenticode 签名，系统可能显示安全提示。Windows、Linux 和 Intel Mac 尚需实际设备上的安装及原生桌面操作验收；支持的平台与依赖见 [Computer Use](docs/computer-use.md)。
+文件名前缀包含应用名称和版本，`SHA256SUMS` 可用于校验下载。AppImage 可能需要系统的 FUSE 2 运行库（Ubuntu 24.04 为 `libfuse2t64`）。macOS 包未经 Apple Developer ID 签名或公证，Windows 包未经 Authenticode 签名，系统可能显示安全提示。Windows、Linux 和 Intel Mac 尚需实际设备上的安装及原生桌面操作验收；支持的平台与依赖见 [Computer Use](docs/computer-use.md)。
 
 ## 使用桌面应用
 
