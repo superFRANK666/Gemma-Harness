@@ -1,0 +1,26 @@
+node_modules/
+target/
+dist/
+build/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+
+# Local sessions, generated binaries, and test output must not enter the repository.
+.harness/
+workers/native/macos/.build/
+workers/macos/.build/
+workers/browser/bin/
+workers/native/bin/
+apps/desktop/src-tauri/gen/
+# Mobile icon variants are generated and are not used by the desktop builds.
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/
+test-results/
+playwright-report/
+tests/ui/artifacts/
+release-assets/
+release-remote.json

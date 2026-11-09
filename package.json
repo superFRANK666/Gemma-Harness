@@ -1,0 +1,36 @@
+{
+  "name": "gemma-harness",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "desktop": "cd apps/desktop && tauri dev",
+    "desktop:build": "node scripts/package-desktop.mjs",
+    "test:ui": "playwright test",
+    "test:rust": "cargo test --workspace --exclude harness-desktop",
+    "test:release": "node --test tests/release-assets.test.mjs",
+    "setup:workers": "node workers/build-native.mjs && npm --prefix workers/browser ci && node scripts/setup-workers.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@tauri-apps/cli": "^2.10.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.0"
+  }
+}

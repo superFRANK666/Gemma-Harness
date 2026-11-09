@@ -1,0 +1,8 @@
+{
+  "name": "harness-browser-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": { "playwright": "1.56.1" },
+  "scripts": { "check": "node --check worker.mjs", "install-browser": "playwright install chromium", "test": "node --test *.test.mjs" }
+}

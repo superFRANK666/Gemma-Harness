@@ -1,0 +1,3021 @@
+{
+  "recordDate": "2026-11-09",
+  "scope": "Synthetic real-model tests and local regression checks; these results are not certification of the target 26B model.",
+  "environment": {
+    "os": "macOS 27.0.1 (26A434)",
+    "architecture": "arm64",
+    "memoryBytes": 17179869184,
+    "runtime": "llama.cpp b12211",
+    "runtimeCommit": "7d7f02875",
+    "contextTokens": 8192,
+    "slots": 1,
+    "acceleration": "Metal",
+    "sampling": "Inference server defaults; no fixed seed requested."
+  },
+  "models": {
+    "gemma4E2B": {
+      "repository": "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF",
+      "revision": "63f6c6f23b3e9e5f9737708daec2f88c9ac2e921",
+      "weights": {
+        "file": "gemma-4-E2B-it-Q4_0.gguf",
+        "sizeBytes": 2841481184,
+        "sha256": "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52"
+      },
+      "projector": {
+        "file": "mmproj-gemma-4-E2B-it-Q8_0.gguf",
+        "sizeBytes": 557368096,
+        "sha256": "042cc2561806cd3b5cb5efb25cab76911e3100c43cc09d854904f921924b1429"
+      },
+      "toolEvaluationThinkingOff": {
+        "backend": "llama_cpp",
+        "model": "gemma4-e2b-test",
+        "modelFamily": "gemma4",
+        "passed": 11,
+        "repeats": 1,
+        "results": [
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "callCount": 1,
+            "case": "english_string",
+            "elapsedMs": 334,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 81,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "你好世界"
+            },
+            "callCount": 1,
+            "case": "chinese_string",
+            "elapsedMs": 351,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 87,
+              "output": 16
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "a,b {x}"
+            },
+            "callCount": 1,
+            "case": "punctuation",
+            "elapsedMs": 428,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 98,
+              "output": 20
+            }
+          },
+          {
+            "actualArguments": {
+              "count": 17,
+              "enabled": true
+            },
+            "callCount": 1,
+            "case": "integer_boolean",
+            "elapsedMs": 372,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 106,
+              "output": 18
+            }
+          },
+          {
+            "actualArguments": {
+              "expected_sha256": null,
+              "path": "note.txt"
+            },
+            "callCount": 1,
+            "case": "nullable",
+            "elapsedMs": 527,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 140,
+              "output": 26
+            }
+          },
+          {
+            "actualArguments": {
+              "color": "blue"
+            },
+            "callCount": 1,
+            "case": "enum",
+            "elapsedMs": 316,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 87,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "tags": [
+                "alpha",
+                "beta"
+              ]
+            },
+            "callCount": 1,
+            "case": "array",
+            "elapsedMs": 409,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 93,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": {
+              "point": {
+                "x": 2,
+                "y": 3
+              }
+            },
+            "callCount": 1,
+            "case": "nested",
+            "elapsedMs": 424,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 116,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "actualTool": "get_time",
+            "callCount": 1,
+            "case": "tool_selection",
+            "elapsedMs": 335,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "answer": "READY",
+            "callCount": 0,
+            "case": "no_tool",
+            "elapsedMs": 67,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "answer": "The current temperature in Tokyo is 15 degrees.",
+            "case": "tool_roundtrip",
+            "elapsedMs": 603,
+            "passed": true,
+            "run": 1
+          }
+        ],
+        "scope": "Synthetic tool-call arguments only; no tool effects, vision, or target-model certification.",
+        "thinkingMode": "off",
+        "total": 11
+      },
+      "toolEvaluationThinkingOn": {
+        "backend": "llama_cpp",
+        "model": "gemma4-e2b-test",
+        "modelFamily": "gemma4",
+        "passed": 11,
+        "repeats": 1,
+        "results": [
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "callCount": 1,
+            "case": "english_string",
+            "elapsedMs": 1917,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 83,
+              "output": 92
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "你好世界"
+            },
+            "callCount": 1,
+            "case": "chinese_string",
+            "elapsedMs": 438,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 89,
+              "output": 20
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "a,b {x}"
+            },
+            "callCount": 1,
+            "case": "punctuation",
+            "elapsedMs": 1681,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 100,
+              "output": 78
+            }
+          },
+          {
+            "actualArguments": {
+              "count": 17,
+              "enabled": true
+            },
+            "callCount": 1,
+            "case": "integer_boolean",
+            "elapsedMs": 398,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 108,
+              "output": 18
+            }
+          },
+          {
+            "actualArguments": {
+              "expected_sha256": null,
+              "path": "note.txt"
+            },
+            "callCount": 1,
+            "case": "nullable",
+            "elapsedMs": 7203,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 142,
+              "output": 280
+            }
+          },
+          {
+            "actualArguments": {
+              "color": "blue"
+            },
+            "callCount": 1,
+            "case": "enum",
+            "elapsedMs": 5233,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 89,
+              "output": 198
+            }
+          },
+          {
+            "actualArguments": {
+              "tags": [
+                "alpha",
+                "beta"
+              ]
+            },
+            "callCount": 1,
+            "case": "array",
+            "elapsedMs": 593,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 95,
+              "output": 23
+            }
+          },
+          {
+            "actualArguments": {
+              "point": {
+                "x": 2,
+                "y": 3
+              }
+            },
+            "callCount": 1,
+            "case": "nested",
+            "elapsedMs": 490,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 118,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "actualTool": "get_time",
+            "callCount": 1,
+            "case": "tool_selection",
+            "elapsedMs": 1776,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "answer": "READY",
+            "callCount": 0,
+            "case": "no_tool",
+            "elapsedMs": 90,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "answer": "The weather in Tokyo is 15 degrees.",
+            "case": "tool_roundtrip",
+            "elapsedMs": 5166,
+            "passed": true,
+            "run": 1
+          }
+        ],
+        "scope": "Synthetic tool-call arguments only; no tool effects, vision, or target-model certification.",
+        "thinkingMode": "on",
+        "total": 11
+      },
+      "agentEvaluationThinkingOffSingle": {
+        "backend": "llama_cpp",
+        "context": 8192,
+        "family": "gemma4",
+        "model": "gemma4-e2b-test",
+        "passed": 2,
+        "repeats": 1,
+        "results": [
+          {
+            "answer": "{\"full_text_artifact\":null,\"has_more\":false,\"has_more_lines\":false,\"next_start_line\":null,\"path\":\"greeting.txt\",\"read_token\":\"e9e509aa-01af-4b86-a5fb-638cef1bea9e\",\"sha256\":\"52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee\",\"start_line\":1,\"text\":\"1: marker_74219\\n\"}",
+            "assistantMessages": [
+              "",
+              "{\"full_text_artifact\":null,\"has_more\":false,\"has_more_lines\":false,\"next_start_line\":null,\"path\":\"greeting.txt\",\"read_token\":\"e9e509aa-01af-4b86-a5fb-638cef1bea9e\",\"sha256\":\"52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee\",\"start_line\":1,\"text\":\"1: marker_74219\\n\"}"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 4430,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "greeting.txt",
+                  "read_token": "<test-token-1>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee",
+                  "start_line": 1,
+                  "text": "1: marker_74219\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The `settings.ini` file has been updated. The line `mode=before` was changed to `mode=after`.",
+            "assistantMessages": [
+              "",
+              "",
+              "",
+              "The `settings.ini` file has been updated. The line `mode=before` was changed to `mode=after`."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 2861,
+            "error": null,
+            "observedFile": "mode=after\n",
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{}",
+                "name": "file_list",
+                "type": "started"
+              },
+              {
+                "name": "file_list",
+                "result": {
+                  "content": null,
+                  "entries": [
+                    {
+                      "directory": false,
+                      "path": "settings.ini",
+                      "symlink": false
+                    }
+                  ],
+                  "has_more": false,
+                  "offset": 0
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"path\":\"settings.ini\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "settings.ini",
+                  "read_token": "<test-token-2>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54",
+                  "start_line": 1,
+                  "text": "1: mode=before\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"new_text\":\"mode=after\",\"old_text\":\"mode=before\",\"path\":\"settings.ini\"}",
+                "name": "file_apply_patch",
+                "type": "started"
+              },
+              {
+                "name": "file_apply_patch",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 11,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "e01223f49527b7df05ec005550dd43b1b053dbd3f74a383bb257a4f868fba6de",
+                  "versionSource": "same_turn_file_read"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_list",
+              "file_read",
+              "file_apply_patch"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "",
+            "assistantMessages": [
+              ""
+            ],
+            "case": "create_file",
+            "elapsedMs": 1323,
+            "error": "模型结束生成但没有返回答案或工具调用；本轮未完成",
+            "observedFile": "hello\\n",
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 7,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "2d6944241362c8000034a6b330bbea45fd89b340fac699e183c81064c926931f"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": false
+          },
+          {
+            "answer": "The file `target.txt` contains `needle_85126`.",
+            "assistantMessages": [
+              "",
+              "The file `target.txt` contains `needle_85126`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 1531,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          }
+        ],
+        "scope": "Synthetic tasks in isolated temporary workspaces; terminal, browser, desktop and MCP disabled.",
+        "thinkingMode": "off",
+        "total": 4
+      },
+      "agentEvaluationThinkingOffThreeRepeats": {
+        "backend": "llama_cpp",
+        "context": 8192,
+        "family": "gemma4",
+        "model": "gemma4-e2b-test",
+        "passed": 8,
+        "repeats": 3,
+        "results": [
+          {
+            "answer": "```json\n{\"marker_74219\"}\n```",
+            "assistantMessages": [
+              "",
+              "```json\n{\"marker_74219\"}\n```"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 1584,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "greeting.txt",
+                  "read_token": "<test-token-3>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee",
+                  "start_line": 1,
+                  "text": "1: marker_74219\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file `settings.ini` has been updated. The line `mode=before` has been changed to `mode=after`.",
+            "assistantMessages": [
+              "",
+              "",
+              "The file `settings.ini` has been updated. The line `mode=before` has been changed to `mode=after`."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 3241,
+            "error": null,
+            "observedFile": "mode=after\n",
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"settings.ini\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "settings.ini",
+                  "read_token": "<test-token-4>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54",
+                  "start_line": 1,
+                  "text": "1: mode=before\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"new_text\":\"mode=after\",\"old_text\":\"mode=before\",\"path\":\"settings.ini\"}",
+                "name": "file_apply_patch",
+                "type": "started"
+              },
+              {
+                "name": "file_apply_patch",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 11,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "e01223f49527b7df05ec005550dd43b1b053dbd3f74a383bb257a4f868fba6de",
+                  "versionSource": "same_turn_file_read"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read",
+              "file_apply_patch"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "",
+            "assistantMessages": [
+              ""
+            ],
+            "case": "create_file",
+            "elapsedMs": 2278,
+            "error": "模型结束生成但没有返回答案或工具调用；本轮未完成",
+            "observedFile": "hello\n",
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 6,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": false
+          },
+          {
+            "answer": "The file containing \"needle_85126\" is `target.txt`.",
+            "assistantMessages": [
+              "",
+              "The file containing \"needle_85126\" is `target.txt`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 1726,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "{\"bytes\":13,\"content\":\"marker_74219\\n\",\"has_more\":false}",
+            "assistantMessages": [
+              "",
+              "{\"bytes\":13,\"content\":\"marker_74219\\n\",\"has_more\":false}"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 1920,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 2,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\",\"raw\":true}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "bytes": 13,
+                  "content": "marker_74219\n",
+                  "has_more": false,
+                  "path": "greeting.txt",
+                  "raw": true,
+                  "read_token": "<test-token-5>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The `mode=before` setting in `settings.ini` has been successfully changed to `mode=after`.",
+            "assistantMessages": [
+              "",
+              "",
+              "The `mode=before` setting in `settings.ini` has been successfully changed to `mode=after`."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 4005,
+            "error": null,
+            "observedFile": "mode=after\n",
+            "passed": true,
+            "run": 2,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"settings.ini\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "settings.ini",
+                  "read_token": "<test-token-6>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54",
+                  "start_line": 1,
+                  "text": "1: mode=before\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"new_text\":\"mode=after\",\"old_text\":\"mode=before\",\"path\":\"settings.ini\",\"read_token\":\"caebeb3c-ae63-40b6-91d7-78df3d42ca9a\"}",
+                "name": "file_apply_patch",
+                "type": "started"
+              },
+              {
+                "name": "file_apply_patch",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 11,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "e01223f49527b7df05ec005550dd43b1b053dbd3f74a383bb257a4f868fba6de"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read",
+              "file_apply_patch"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I have created `result.txt` with the text \"hello\" followed by a trailing newline.",
+            "assistantMessages": [
+              "",
+              "I have created `result.txt` with the text \"hello\" followed by a trailing newline."
+            ],
+            "case": "create_file",
+            "elapsedMs": 1841,
+            "error": null,
+            "observedFile": "hello\n",
+            "passed": true,
+            "run": 2,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 6,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file containing `needle_85126` is `target.txt`.",
+            "assistantMessages": [
+              "",
+              "The file containing `needle_85126` is `target.txt`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 1622,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 2,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "{\"full_text_artifact\":null,\"has_more\":false,\"has_more_lines\":false,\"next_start_line\":null,\"path\":\"greeting.txt\",\"read_token\":\"18090913-d4e7-480d-8c8b-7f32707a0194\",\"sha256\":\"52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee\",\"start_line\":1,\"text\":\"marker_74219\\n\"}",
+            "assistantMessages": [
+              "",
+              "{\"full_text_artifact\":null,\"has_more\":false,\"has_more_lines\":false,\"next_start_line\":null,\"path\":\"greeting.txt\",\"read_token\":\"18090913-d4e7-480d-8c8b-7f32707a0194\",\"sha256\":\"52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee\",\"start_line\":1,\"text\":\"marker_74219\\n\"}"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 4699,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 3,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "greeting.txt",
+                  "read_token": "<test-token-7>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee",
+                  "start_line": 1,
+                  "text": "1: marker_74219\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "Successfully changed `mode=before` to `mode=after` in `settings.ini`. The file now contains:\n```ini\nmode=after\n```",
+            "assistantMessages": [
+              "",
+              "",
+              "",
+              "Successfully changed `mode=before` to `mode=after` in `settings.ini`. The file now contains:\n```ini\nmode=after\n```"
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 30474,
+            "error": null,
+            "observedFile": "mode=after\n",
+            "passed": true,
+            "run": 3,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"settings.ini\",\"raw\":true}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "bytes": 12,
+                  "content": "mode=before\n",
+                  "has_more": false,
+                  "path": "settings.ini",
+                  "raw": true,
+                  "read_token": "<test-token-8>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54"
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"new_text\":\"mode=after\\\\n\",\"old_text\":\"mode=before\\\\n\",\"path\":\"settings.ini\"}",
+                "name": "file_apply_patch",
+                "type": "started"
+              },
+              {
+                "name": "file_apply_patch",
+                "result": {
+                  "content": null,
+                  "error": "old_text must match exactly once",
+                  "isError": true,
+                  "versionSource": "same_turn_file_read"
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"content\":\"mode=after\\n\",\"path\":\"settings.ini\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 11,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "e01223f49527b7df05ec005550dd43b1b053dbd3f74a383bb257a4f868fba6de",
+                  "versionSource": "same_turn_file_read"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read",
+              "file_apply_patch",
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I have created `result.txt` with the content \"hello\" followed by a newline.",
+            "assistantMessages": [
+              "",
+              "I have created `result.txt` with the content \"hello\" followed by a newline."
+            ],
+            "case": "create_file",
+            "elapsedMs": 2150,
+            "error": null,
+            "observedFile": "hello\n",
+            "passed": true,
+            "run": 3,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 6,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file containing `needle_85126` is `target.txt`.",
+            "assistantMessages": [
+              "",
+              "The file containing `needle_85126` is `target.txt`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 1824,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 3,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          }
+        ],
+        "scope": "Synthetic tasks in isolated temporary workspaces; terminal, browser, desktop and MCP disabled.",
+        "thinkingMode": "off",
+        "total": 12
+      },
+      "agentEvaluationThinkingOnSingle": {
+        "backend": "llama_cpp",
+        "context": 8192,
+        "family": "gemma4",
+        "model": "gemma4-e2b-test",
+        "passed": 3,
+        "repeats": 1,
+        "results": [
+          {
+            "answer": "marker_74219",
+            "assistantMessages": [
+              "",
+              "marker_74219"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 11532,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\",\"raw\":true}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "bytes": 13,
+                  "content": "marker_74219\n",
+                  "has_more": false,
+                  "path": "greeting.txt",
+                  "raw": true,
+                  "read_token": "<test-token-9>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I have read `settings.ini` and changed `mode=before` to `mode=after`. The file has been updated.",
+            "assistantMessages": [
+              "",
+              "",
+              "I have read `settings.ini` and changed `mode=before` to `mode=after`. The file has been updated."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 7987,
+            "error": null,
+            "observedFile": "mode=after",
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"settings.ini\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "settings.ini",
+                  "read_token": "<test-token-10>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54",
+                  "start_line": 1,
+                  "text": "1: mode=before\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"content\":\"mode=after\",\"path\":\"settings.ini\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 10,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "db5d835e59e1d5a64db72253abdc48b6188b195a4d36473c60b1ec7ea464a84d",
+                  "versionSource": "same_turn_file_read"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read",
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "File `result.txt` has been created with the content \"hello\" and a trailing newline.",
+            "assistantMessages": [
+              "",
+              "File `result.txt` has been created with the content \"hello\" and a trailing newline."
+            ],
+            "case": "create_file",
+            "elapsedMs": 4041,
+            "error": null,
+            "observedFile": "hello\n",
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 6,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file containing `needle_85126` is `target.txt`.",
+            "assistantMessages": [
+              "",
+              "The file containing `needle_85126` is `target.txt`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 3379,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          }
+        ],
+        "scope": "Synthetic tasks in isolated temporary workspaces; terminal, browser, desktop and MCP disabled.",
+        "thinkingMode": "on",
+        "total": 4
+      },
+      "earlierAgentExplorationBeforeFileReadDescriptionClarification": {
+        "backend": "llama_cpp",
+        "context": 8192,
+        "family": "gemma4",
+        "model": "gemma4-e2b-test",
+        "passed": 3,
+        "repeats": 1,
+        "results": [
+          {
+            "answer": "```\n1: marker_74219\n```",
+            "assistantMessages": [
+              "",
+              "```\n1: marker_74219\n```"
+            ],
+            "case": "read_exact",
+            "elapsedMs": 3092,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"greeting.txt\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "greeting.txt",
+                  "read_token": "<test-token-11>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee",
+                  "start_line": 1,
+                  "text": "1: marker_74219\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The `settings.ini` file has been updated. The line `mode=before` was changed to `mode=after`.",
+            "assistantMessages": [
+              "",
+              "",
+              "The `settings.ini` file has been updated. The line `mode=before` was changed to `mode=after`."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 4020,
+            "error": null,
+            "observedFile": "mode=after\n",
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"settings.ini\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "settings.ini",
+                  "read_token": "<test-token-12>",
+                  "sha256": "99f2199897b71f97503b5a2d560ff9358de3642018f5716829bea51a41243b54",
+                  "start_line": 1,
+                  "text": "1: mode=before\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              },
+              {
+                "arguments": "{\"new_text\":\"mode=after\",\"old_text\":\"mode=before\",\"path\":\"settings.ini\",\"read_token\":\"8ac658c6-4f10-47a0-ad5c-4dba82893d8d\"}",
+                "name": "file_apply_patch",
+                "type": "started"
+              },
+              {
+                "name": "file_apply_patch",
+                "result": {
+                  "backup_artifact": "<TEMP_PATH>",
+                  "bytes": 11,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "settings.ini",
+                  "sha256": "e01223f49527b7df05ec005550dd43b1b053dbd3f74a383bb257a4f868fba6de"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read",
+              "file_apply_patch"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file `result.txt` has been created with the exact text \"hello\" followed by a trailing newline.",
+            "assistantMessages": [
+              "",
+              "The file `result.txt` has been created with the exact text \"hello\" followed by a trailing newline."
+            ],
+            "case": "create_file",
+            "elapsedMs": 1861,
+            "error": null,
+            "observedFile": "hello\n",
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"content\":\"hello\\n\",\"path\":\"result.txt\"}",
+                "name": "file_write",
+                "type": "started"
+              },
+              {
+                "name": "file_write",
+                "result": {
+                  "backup_artifact": null,
+                  "bytes": 6,
+                  "cleanup_warning": null,
+                  "content": null,
+                  "path": "result.txt",
+                  "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_write"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "The file containing `needle_85126` is `target.txt`.",
+            "assistantMessages": [
+              "",
+              "The file containing `needle_85126` is `target.txt`."
+            ],
+            "case": "find_file",
+            "elapsedMs": 1622,
+            "error": null,
+            "observedFile": null,
+            "passed": true,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"query\":\"needle_85126\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "files_scanned": 2,
+                  "matches": [
+                    {
+                      "line": 1,
+                      "path": "target.txt",
+                      "text": "needle_85126"
+                    }
+                  ],
+                  "truncated": false
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          }
+        ],
+        "scope": "Synthetic tasks in isolated temporary workspaces; terminal, browser, desktop and MCP disabled.",
+        "thinkingMode": "off",
+        "total": 4
+      },
+      "diagnosticsThinkingOff": [
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "off"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218152,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 3343,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "partial",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": false,
+            "requested": "off",
+            "status": "not_observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": false,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "message": "Vision probe returned an incorrect or missing quadrant color",
+              "status": "failed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "message": "Image tool results were not tested because image input did not pass.",
+              "status": "unknown",
+              "tested": false
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "failed",
+            "tested": true
+          }
+        },
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "off"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218848,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 4297,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "passed",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": false,
+            "requested": "off",
+            "status": "not_observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": false,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "status": "passed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "status": "passed",
+              "tested": true
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "passed",
+            "tested": true
+          }
+        },
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "off"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218853,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 4082,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "passed",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": false,
+            "requested": "off",
+            "status": "not_observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": false,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "status": "passed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "status": "passed",
+              "tested": true
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "passed",
+            "tested": true
+          }
+        },
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "off"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218857,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 4219,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "passed",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": false,
+            "requested": "off",
+            "status": "not_observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": false,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "status": "passed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "status": "passed",
+              "tested": true
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "passed",
+            "tested": true
+          }
+        }
+      ],
+      "diagnosticsThinkingOn": [
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "on"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218166,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 28166,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "passed",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": true,
+            "requested": "on",
+            "status": "observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": true,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "status": "passed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "status": "passed",
+              "tested": true
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "passed",
+            "tested": true
+          }
+        },
+        {
+          "configuredCapabilities": {
+            "backend": "llama_cpp",
+            "capabilitiesVerifiedByProfile": false,
+            "familySource": "configured",
+            "modelFamily": "gemma4",
+            "templateOwner": "inference_server",
+            "thinkingMode": "on"
+          },
+          "discovery": {
+            "data": {
+              "configuredContextLength": 8192,
+              "models": {
+                "data": [
+                  {
+                    "aliases": [
+                      "gemma4-e2b-test"
+                    ],
+                    "architecture": {
+                      "input_modalities": [
+                        "text",
+                        "image",
+                        "audio",
+                        "video"
+                      ],
+                      "output_modalities": [
+                        "text"
+                      ]
+                    },
+                    "created": 1794218923,
+                    "id": "gemma4-e2b-test",
+                    "meta": {
+                      "ftype": "Q4_0",
+                      "n_ctx": 8192,
+                      "n_ctx_train": 131072,
+                      "n_embd": 1536,
+                      "n_params": 4628569635,
+                      "n_vocab": 262144,
+                      "size": 2825664652,
+                      "vocab_type": 2
+                    },
+                    "object": "model",
+                    "owned_by": "llamacpp",
+                    "tags": []
+                  }
+                ],
+                "models": [
+                  {
+                    "capabilities": [
+                      "completion",
+                      "multimodal"
+                    ],
+                    "description": "",
+                    "details": {
+                      "families": [
+                        ""
+                      ],
+                      "family": "",
+                      "format": "gguf",
+                      "parameter_size": "",
+                      "parent_model": "",
+                      "quantization_level": ""
+                    },
+                    "digest": "",
+                    "model": "gemma4-e2b-test",
+                    "modified_at": "",
+                    "name": "gemma4-e2b-test",
+                    "parameters": "",
+                    "size": "",
+                    "tags": [
+                      ""
+                    ],
+                    "type": "model"
+                  }
+                ],
+                "object": "list"
+              },
+              "native": {
+                "status": "not_requested"
+              },
+              "selectedModel": "gemma4-e2b-test"
+            },
+            "status": "passed"
+          },
+          "elapsedMs": 23805,
+          "exactModelArtifact": {
+            "message": "Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified.",
+            "status": "unknown"
+          },
+          "status": "passed",
+          "targetProfile": {
+            "architectureContextLimit": 262144,
+            "defaultContextLength": 8192,
+            "id": "gemma4-26b-a4b-heretic-i1",
+            "identityFingerprint": "b24671a72ecb019df51f910c3cbd08278eed37c11b8f34515706e99071cd7936",
+            "nativeToolFormat": "gemma4",
+            "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+            "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+            "sourceRepository": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic",
+            "sourceRevision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+            "visionRequiresProjector": true
+          },
+          "thinking": {
+            "message": "A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime.",
+            "observedInToolProbe": true,
+            "requested": "on",
+            "status": "observed"
+          },
+          "toolCalling": {
+            "callCount": 1,
+            "reasoningObserved": true,
+            "resultRoundtrip": true,
+            "status": "passed"
+          },
+          "transport": {
+            "compatibilityDetection": "explicit_http_400_or_422_parameter_rejection_only",
+            "omittedOptionalParameters": [],
+            "protocol": "chat_completions",
+            "timeoutSeconds": {
+              "connect": 10,
+              "diagnosticGeneration": 90,
+              "request": 600
+            }
+          },
+          "vision": {
+            "imageInput": {
+              "status": "passed",
+              "tested": true
+            },
+            "imageToolResult": {
+              "status": "passed",
+              "tested": true
+            },
+            "message": "Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy.",
+            "status": "passed",
+            "tested": true
+          }
+        }
+      ],
+      "directSyntheticImageCheck": {
+        "expected": {
+          "topLeft": "red",
+          "topRight": "green",
+          "bottomLeft": "blue",
+          "bottomRight": "yellow"
+        },
+        "response": {
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "```json\n{\n  \"topLeft\": \"red\",\n  \"topRight\": \"green\",\n  \"bottomLeft\": \"blue\",\n  \"bottomRight\": \"yellow\"\n}\n```"
+              }
+            }
+          ],
+          "created": 1794218212,
+          "model": "gemma4-e2b-test",
+          "system_fingerprint": "b12211-7d7f02875",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 44,
+            "prompt_tokens": 126,
+            "total_tokens": 170,
+            "prompt_tokens_details": {
+              "cached_tokens": 1
+            }
+          },
+          "id": "chatcmpl-26cBLJFGkJNpczgDn71yTObaEddupuFy",
+          "timings": {
+            "cache_n": 1,
+            "prompt_n": 125,
+            "prompt_ms": 255.094,
+            "prompt_per_token_ms": 2.040752,
+            "prompt_per_second": 490.0154452868354,
+            "predicted_n": 44,
+            "predicted_ms": 990.269,
+            "predicted_per_token_ms": 23.029511627906977,
+            "predicted_per_second": 43.422544783286156
+          }
+        }
+      }
+    },
+    "functiongemma270m": {
+      "repository": "https://huggingface.co/ggml-org/functiongemma-270m-it-GGUF",
+      "revision": "2566ce14aedfc14fdd0de955ba67346425e67126",
+      "weights": {
+        "file": "functiongemma-270m-it-q8_0.gguf",
+        "sizeBytes": 291557792,
+        "sha256": "83940d4dd9676710856f43523bed096164a595a96f6b34771610a03937de5270"
+      },
+      "toolEvaluationThreeRepeats": {
+        "backend": "llama_cpp",
+        "model": "functiongemma-test",
+        "modelFamily": "functiongemma",
+        "passed": 24,
+        "repeats": 3,
+        "results": [
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "callCount": 1,
+            "case": "english_string",
+            "elapsedMs": 96,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 95,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "你好世界"
+            },
+            "callCount": 1,
+            "case": "chinese_string",
+            "elapsedMs": 93,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 101,
+              "output": 16
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "a,b {x}"
+            },
+            "callCount": 1,
+            "case": "punctuation",
+            "elapsedMs": 102,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 112,
+              "output": 20
+            }
+          },
+          {
+            "actualArguments": {
+              "count": 17,
+              "enabled": true
+            },
+            "callCount": 1,
+            "case": "integer_boolean",
+            "elapsedMs": 104,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 120,
+              "output": 18
+            }
+          },
+          {
+            "actualArguments": {
+              "expected_sha256": "null",
+              "path": "note.txt"
+            },
+            "callCount": 1,
+            "case": "nullable",
+            "elapsedMs": 150,
+            "passed": false,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 150,
+              "output": 28
+            }
+          },
+          {
+            "actualArguments": {
+              "color": "blue"
+            },
+            "callCount": 1,
+            "case": "enum",
+            "elapsedMs": 85,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 101,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "tags": [
+                "alpha",
+                "beta"
+              ]
+            },
+            "callCount": 1,
+            "case": "array",
+            "elapsedMs": 107,
+            "passed": true,
+            "rejected": null,
+            "run": 1,
+            "usage": {
+              "input": 107,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": null,
+            "callCount": 0,
+            "case": "nested",
+            "elapsedMs": 168,
+            "passed": false,
+            "rejected": "Invalid FunctionGemma call: Duplicate FunctionGemma argument key",
+            "run": 1,
+            "usage": {
+              "input": 140,
+              "output": 29
+            }
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "actualTool": "get_time",
+            "callCount": 1,
+            "case": "tool_selection",
+            "elapsedMs": 89,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "answer": "",
+            "callCount": 1,
+            "case": "no_tool",
+            "elapsedMs": 86,
+            "passed": false,
+            "run": 1
+          },
+          {
+            "answer": "The weather in Tokyo is 15 degrees Celsius.",
+            "case": "tool_roundtrip",
+            "elapsedMs": 150,
+            "passed": true,
+            "run": 1
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "callCount": 1,
+            "case": "english_string",
+            "elapsedMs": 79,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 95,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "你好世界"
+            },
+            "callCount": 1,
+            "case": "chinese_string",
+            "elapsedMs": 85,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 101,
+              "output": 16
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "a,b {x}"
+            },
+            "callCount": 1,
+            "case": "punctuation",
+            "elapsedMs": 102,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 112,
+              "output": 20
+            }
+          },
+          {
+            "actualArguments": {
+              "count": 17,
+              "enabled": true
+            },
+            "callCount": 1,
+            "case": "integer_boolean",
+            "elapsedMs": 90,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 120,
+              "output": 18
+            }
+          },
+          {
+            "actualArguments": {
+              "expected_sha256": "null",
+              "path": "note.txt"
+            },
+            "callCount": 1,
+            "case": "nullable",
+            "elapsedMs": 137,
+            "passed": false,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 150,
+              "output": 28
+            }
+          },
+          {
+            "actualArguments": {
+              "color": "blue"
+            },
+            "callCount": 1,
+            "case": "enum",
+            "elapsedMs": 86,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 101,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "tags": [
+                "alpha",
+                "beta"
+              ]
+            },
+            "callCount": 1,
+            "case": "array",
+            "elapsedMs": 96,
+            "passed": true,
+            "rejected": null,
+            "run": 2,
+            "usage": {
+              "input": 107,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": null,
+            "callCount": 0,
+            "case": "nested",
+            "elapsedMs": 157,
+            "passed": false,
+            "rejected": "Invalid FunctionGemma call: Duplicate FunctionGemma argument key",
+            "run": 2,
+            "usage": {
+              "input": 140,
+              "output": 29
+            }
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "actualTool": "get_time",
+            "callCount": 1,
+            "case": "tool_selection",
+            "elapsedMs": 81,
+            "passed": true,
+            "run": 2
+          },
+          {
+            "answer": "",
+            "callCount": 1,
+            "case": "no_tool",
+            "elapsedMs": 83,
+            "passed": false,
+            "run": 2
+          },
+          {
+            "answer": "The current weather in Tokyo is 15 degrees Celsius.",
+            "case": "tool_roundtrip",
+            "elapsedMs": 146,
+            "passed": true,
+            "run": 2
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "callCount": 1,
+            "case": "english_string",
+            "elapsedMs": 81,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 95,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "你好世界"
+            },
+            "callCount": 1,
+            "case": "chinese_string",
+            "elapsedMs": 86,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 101,
+              "output": 16
+            }
+          },
+          {
+            "actualArguments": {
+              "text": "a,b {x}"
+            },
+            "callCount": 1,
+            "case": "punctuation",
+            "elapsedMs": 104,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 112,
+              "output": 20
+            }
+          },
+          {
+            "actualArguments": {
+              "count": 17,
+              "enabled": true
+            },
+            "callCount": 1,
+            "case": "integer_boolean",
+            "elapsedMs": 88,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 120,
+              "output": 18
+            }
+          },
+          {
+            "actualArguments": {
+              "expected_sha256": "null",
+              "path": "note.txt"
+            },
+            "callCount": 1,
+            "case": "nullable",
+            "elapsedMs": 141,
+            "passed": false,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 150,
+              "output": 28
+            }
+          },
+          {
+            "actualArguments": {
+              "color": "blue"
+            },
+            "callCount": 1,
+            "case": "enum",
+            "elapsedMs": 76,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 101,
+              "output": 15
+            }
+          },
+          {
+            "actualArguments": {
+              "tags": [
+                "alpha",
+                "beta"
+              ]
+            },
+            "callCount": 1,
+            "case": "array",
+            "elapsedMs": 93,
+            "passed": true,
+            "rejected": null,
+            "run": 3,
+            "usage": {
+              "input": 107,
+              "output": 19
+            }
+          },
+          {
+            "actualArguments": null,
+            "callCount": 0,
+            "case": "nested",
+            "elapsedMs": 140,
+            "passed": false,
+            "rejected": "Invalid FunctionGemma call: Duplicate FunctionGemma argument key",
+            "run": 3,
+            "usage": {
+              "input": 140,
+              "output": 29
+            }
+          },
+          {
+            "actualArguments": {
+              "city": "Tokyo"
+            },
+            "actualTool": "get_time",
+            "callCount": 1,
+            "case": "tool_selection",
+            "elapsedMs": 76,
+            "passed": true,
+            "run": 3
+          },
+          {
+            "answer": "",
+            "callCount": 1,
+            "case": "no_tool",
+            "elapsedMs": 77,
+            "passed": false,
+            "run": 3
+          },
+          {
+            "answer": "The current weather in Tokyo is 15 degrees Celsius.",
+            "case": "tool_roundtrip",
+            "elapsedMs": 145,
+            "passed": true,
+            "run": 3
+          }
+        ],
+        "scope": "Synthetic tool-call arguments only; no tool effects, vision, or target-model certification.",
+        "thinkingMode": "auto",
+        "total": 33
+      },
+      "agentEvaluationSingle": {
+        "backend": "llama_cpp",
+        "context": 8192,
+        "family": "functiongemma",
+        "model": "functiongemma-test",
+        "passed": 0,
+        "repeats": 1,
+        "results": [
+          {
+            "answer": "The exact file content was:\n\"1: marker_74219\\n\"\nhas_more_lines_false,next_start_line:1,path:<escape>greeting.txt<escape>\nread_token:faba992e-faac-4d8c-9fdd-b305b3da7029,sha256:52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee,start_line:1,text:1: marker_74219\"",
+            "assistantMessages": [
+              "",
+              "The exact file content was:\n\"1: marker_74219\\n\"\nhas_more_lines_false,next_start_line:1,path:<escape>greeting.txt<escape>\nread_token:faba992e-faac-4d8c-9fdd-b305b3da7029,sha256:52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee,start_line:1,text:1: marker_74219\""
+            ],
+            "case": "read_exact",
+            "elapsedMs": 1144,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\"Greeting.txt\"}",
+                "name": "file_read",
+                "type": "started"
+              },
+              {
+                "name": "file_read",
+                "result": {
+                  "content": null,
+                  "full_text_artifact": null,
+                  "has_more": false,
+                  "has_more_lines": false,
+                  "next_start_line": null,
+                  "path": "greeting.txt",
+                  "read_token": "<test-token-13>",
+                  "sha256": "52310cdd267c86d88576f0451e145ce761d727e15e7e7c7f189760b97aa0bfee",
+                  "start_line": 1,
+                  "text": "1: marker_74219\n",
+                  "text_truncated": false,
+                  "total_lines": 1
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_read"
+            ],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I am sorry, but I cannot assist with modifying file settings or managing files like settings. My current capabilities are limited to assisting with the execution of specific tools like file management, reading, writing, and searching. I cannot generate, modify, or preserve file settings.",
+            "assistantMessages": [
+              "I am sorry, but I cannot assist with modifying file settings or managing files like settings. My current capabilities are limited to assisting with the execution of specific tools like file management, reading, writing, and searching. I cannot generate, modify, or preserve file settings."
+            ],
+            "case": "edit_existing",
+            "elapsedMs": 447,
+            "error": null,
+            "observedFile": "mode=before\n",
+            "passed": false,
+            "run": 1,
+            "toolEvents": [],
+            "toolNames": [],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I cannot assist with creating or modifying text files. My current capabilities are limited to assisting with specific software operations like file management and script execution. I cannot generate or modify text files.",
+            "assistantMessages": [
+              "I cannot assist with creating or modifying text files. My current capabilities are limited to assisting with specific software operations like file management and script execution. I cannot generate or modify text files."
+            ],
+            "case": "create_file",
+            "elapsedMs": 360,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [],
+            "toolNames": [],
+            "turnCompleted": true
+          },
+          {
+            "answer": "I encountered an error trying to perform the file search. The tool provided was invalid due to a JSON Schema mismatch. Please provide the correct arguments for the tool.",
+            "assistantMessages": [
+              "",
+              "I encountered an error trying to perform the file search. The tool provided was invalid due to a JSON Schema mismatch. Please provide the correct arguments for the tool."
+            ],
+            "case": "find_file",
+            "elapsedMs": 477,
+            "error": null,
+            "observedFile": null,
+            "passed": false,
+            "run": 1,
+            "toolEvents": [
+              {
+                "arguments": "{\"path\":\".\"}",
+                "name": "file_search",
+                "type": "started"
+              },
+              {
+                "name": "file_search",
+                "result": {
+                  "content": null,
+                  "instruction": "Correct the arguments once, using only registered tool names and their exact schema.",
+                  "isError": true,
+                  "validationError": "参数不符合工具 JSON Schema: : \"query\" is a required property"
+                },
+                "type": "completed"
+              }
+            ],
+            "toolNames": [
+              "file_search"
+            ],
+            "turnCompleted": true
+          }
+        ],
+        "scope": "Synthetic tasks in isolated temporary workspaces; terminal, browser, desktop and MCP disabled.",
+        "thinkingMode": "auto",
+        "total": 4
+      }
+    }
+  },
+  "regressionChecks": {
+    "rustWorkspace": {
+      "passed": 147,
+      "failed": 0,
+      "ignoredByDefault": 1,
+      "ignoredBrowserBridgeExecutedSeparately": "passed"
+    },
+    "rustClippyAllTargetsWarningsAsErrors": "passed",
+    "rustFormatting": "passed",
+    "desktopHostCompilation": "passed",
+    "frontendProductionBuild": "passed",
+    "playwrightFullSuiteBeforeLastTargetedUiEdits": {
+      "passed": 44,
+      "failed": 0
+    },
+    "playwrightWorkbenchAfterUiEdits": {
+      "passed": 13,
+      "failed": 0
+    },
+    "realChromiumWorkerIntegration": {
+      "passed": 2,
+      "failed": 0
+    },
+    "macosArm64Package": {
+      "appSignature": "ad-hoc; codesign deep strict verified",
+      "dmgChecksum": "hdiutil verify passed",
+      "dmgSha256": "b0d4cd162a5e91aa89bb70d3b132ec9b3ed94ad2cdf431e1eea71dc824d65097",
+      "notarized": false,
+      "nativeApplicationLaunchedForAcceptance": false
+    }
+  },
+  "limitations": [
+    "Gemma 4 26B A4B Heretic target weights, quantization, runtime and projector were not tested.",
+    "These small fixed synthetic samples and unspecified backend sampling are not a statistical accuracy estimate.",
+    "LM Studio actual FunctionGemma behavior, Windows/Linux packages and native GUI acceptance were not tested in this run.",
+    "The visual probe checks synthetic color quadrants and the image tool-result roundtrip, not general visual or desktop-task accuracy.",
+    "The initial Gemma 4 thinking-off image input probe failed; three later probes passed. All four are retained.",
+    "Agent pass requires the turn to complete plus the case-specific final answer or file-state assertion; inspect toolEvents and assistantMessages for intermediate errors and inconsistencies.",
+    "File-state success does not imply every intermediate model statement was accurate."
+  ]
+}

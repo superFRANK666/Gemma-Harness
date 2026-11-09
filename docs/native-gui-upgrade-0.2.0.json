@@ -1,0 +1,39 @@
+{
+  "generatedAt": "2026-11-09T14:48:44.779864+08:00",
+  "version": "0.2.0",
+  "application": "$HOME/Harness/target/release/bundle/macos/Gemma Harness.app",
+  "executableSha256": "1bf618268d9fa4705969471d70096413ad248a617084adc97becdd67f1eadffc",
+  "dmgSha256": "8bdaf1eb8a2729a3ba715356cc158da410698898858210b15fbfac7b7b028428",
+  "surface": "native macOS WebKit / tauri://localhost",
+  "ipcFixturesUsed": false,
+  "modelUsed": false,
+  "observed": {
+    "versionBadge": "0.2",
+    "workspaceBeforeAndAfter": "$HOME/Desktop",
+    "settingsChanged": false,
+    "performancePanel": {
+      "noRequestYet": true,
+      "throughput": "—",
+      "actualUsage": "后端未返回",
+      "contextLabel": "连接配置上下文",
+      "contextConfigured": 8192
+    },
+    "terminal": {
+      "command": "printf 'UPGRADE_020_START\\n'; sleep 2; printf 'UPGRADE_020_END\\n'",
+      "startVisibleWhileInputDisabledAndStopVisible": true,
+      "exitCode": 0,
+      "isError": false,
+      "outputComplete": true,
+      "cancelled": false,
+      "stdoutArtifact": "$HOME/Library/Application Support/dev.gemmaharness.desktop/artifacts/258b7a2b-7397-42f2-9c4e-3809e89bcfa6-stdout.txt",
+      "stdoutSha256": "d0915409ce8ee47c06e83d4ac7c104a369fdaa477f6933106853efa4d32f4c55",
+      "stdoutExact": "UPGRADE_020_START\nUPGRADE_020_END\n"
+    },
+    "leftIdleWithTerminalAndPerformancePanelClosed": true
+  },
+  "limits": [
+    "No live Gemma model or throughput measurement",
+    "No new Harness desktop permissions granted",
+    "Prior full file edit/stop acceptance is a separate 0.1.0 evidence record"
+  ]
+}

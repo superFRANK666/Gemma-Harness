@@ -1,0 +1,15 @@
+[package]
+name = "harness-model"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util"] }
+tokio-util = "0.7"

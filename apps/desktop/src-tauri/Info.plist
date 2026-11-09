@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>NSAppleEventsUsageDescription</key><string>Gemma Harness uses desktop automation only when you enable Computer Use.</string><key>NSScreenCaptureUsageDescription</key><string>Capture selected desktop observations for your local agent.</string></dict></plist>

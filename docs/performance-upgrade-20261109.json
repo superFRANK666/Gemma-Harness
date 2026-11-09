@@ -1,0 +1,23 @@
+{
+  "arch": "aarch64",
+  "generatedAt": "2026-11-09T06:41:30.433417+00:00",
+  "harnessVersion": "0.2.0",
+  "history": {
+    "activityEvents": 10000,
+    "afterMs": 0.00865792,
+    "beforeMs": 23.346916,
+    "projectedMessages": 11,
+    "speedup": 2696.5964111472504,
+    "textBytesPerActivity": 4200
+  },
+  "imageBudgetEstimate": {
+    "afterMs": 0.0000385083,
+    "base64Bytes": 8388608,
+    "beforeMs": 0.15898664,
+    "speedup": 4128.633047940315
+  },
+  "limits": "Microbenchmarks measure Harness overhead only. They do not establish Gemma quality, actual tokenizer accuracy, total app RSS, end-to-end TTFT or generation speed.",
+  "method": "release build; median of 7 batched samples; synthetic temporary SQLite; prior replay/estimator algorithms reproduced in same process",
+  "modelGenerationMeasured": false,
+  "platform": "macos"
+}

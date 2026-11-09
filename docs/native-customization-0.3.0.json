@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-11-09T15:26:27.936193+08:00",
+  "version": "0.3.0",
+  "executableSha256": "a4582202b0259f7a81b58aa1c599f249cde851570aef4ccf7d603d75fff718cc",
+  "dmgSha256": "a30010f4ce757f12c9a840f30d7d26a1a3a8145af829700e89d1b0080dc05103",
+  "surface": "native packaged Tauri app; no IPC fixtures",
+  "observed": {
+    "legacyWorkspaceMigratedIntoProjects": true,
+    "appearanceTabPresent": true,
+    "lightBluePreviewAndSave": true,
+    "lightBlueAndProjectAliasSurviveRestart": true,
+    "fontControlsPresent": true,
+    "testProjectRegistered": "$HOME/Harness/.harness/customization-acceptance",
+    "displayNameRenamedTo": "原生验收项目",
+    "pathKept": true,
+    "removedViaProjectMenu": true,
+    "removalNoticeExplainsFileAndHistoryPreservation": true,
+    "projectAbsentAfterSecondRestart": true,
+    "fileOnDiskPreserved": "$HOME/Harness/.harness/customization-acceptance/keep.txt",
+    "fileSha256": "ad777e1463d3cdaf3c32fc271fc06b7997c2b6249045568511298e27647e3d07",
+    "originalWorkspaceRestored": "$HOME/Desktop",
+    "originalAppearanceRestored": {
+      "accent": "sage",
+      "codeFontFamily": "system",
+      "codeFontSize": 12,
+      "fontFamily": "system",
+      "fontSize": 13,
+      "theme": "dark"
+    },
+    "finalProjects": [
+      {
+        "name": "Desktop",
+        "workspace": "$HOME/Desktop",
+        "deviceId": "local"
+      }
+    ],
+    "leftIdleWithInspectorHidden": true
+  },
+  "limits": [
+    "Font-choice variants/system theme changes covered in Chromium UI tests; native manual check used default fonts",
+    "No live Gemma or Harness desktop automation test in this iteration"
+  ]
+}

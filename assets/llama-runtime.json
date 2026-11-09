@@ -1,0 +1,72 @@
+{
+  "version": "b12211",
+  "source": "https://github.com/ggml-org/llama.cpp/releases/tag/b12211",
+  "assets": [
+    {
+      "name": "cudart-llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/cudart-llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz",
+      "size": 594373633,
+      "digest": "sha256:d66dba34f0e45c66ce7d4484116c681aa71ff257ee1e47b02d9775aa59b5ef77"
+    },
+    {
+      "name": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "size": 391443627,
+      "digest": "sha256:8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+    },
+    {
+      "name": "llama-b12211-bin-macos-arm64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-macos-arm64.tar.gz",
+      "size": 16711245,
+      "digest": "sha256:4da4edb437358d31d55938ad849d262ca31b0e0ffb35e9caedb727a0cd5a8f0f"
+    },
+    {
+      "name": "llama-b12211-bin-macos-x64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-macos-x64.tar.gz",
+      "size": 12455590,
+      "digest": "sha256:6055cc672cc5c744481bb88ac1a7739ff476966c8a190ddaa20676034693a358"
+    },
+    {
+      "name": "llama-b12211-bin-ubuntu-arm64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-ubuntu-arm64.tar.gz",
+      "size": 18759007,
+      "digest": "sha256:6eed2da01c098f814170e941e11a8d91eed200a9a2923eac805fe116b14aff30"
+    },
+    {
+      "name": "llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz",
+      "size": 188258232,
+      "digest": "sha256:103fac975e807da6cdb5717e87ca594e25bb7703dd8a7f10c22269c124e1a552"
+    },
+    {
+      "name": "llama-b12211-bin-ubuntu-vulkan-x64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-ubuntu-vulkan-x64.tar.gz",
+      "size": 35924677,
+      "digest": "sha256:9759acd293d3738f39d3ceed740bd3125d87dfb492ef8c4f00114d3393d37942"
+    },
+    {
+      "name": "llama-b12211-bin-ubuntu-x64.tar.gz",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-ubuntu-x64.tar.gz",
+      "size": 23109987,
+      "digest": "sha256:962924b5431bc1237a9e5d26ba072d37b6fe05f79b495206e7ff6134887624c5"
+    },
+    {
+      "name": "llama-b12211-bin-win-cpu-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-win-cpu-x64.zip",
+      "size": 24886431,
+      "digest": "sha256:23729000408c6968faf5e322afc99319d3b8c576ba872ef7663d9b89810090f3"
+    },
+    {
+      "name": "llama-b12211-bin-win-cuda-12.4-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-win-cuda-12.4-x64.zip",
+      "size": 288918486,
+      "digest": "sha256:e5914eb78199ee0874c4f2febc9fc45b9b3fafbbedd36663f203716b9289a83f"
+    },
+    {
+      "name": "llama-b12211-bin-win-vulkan-x64.zip",
+      "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12211/llama-b12211-bin-win-vulkan-x64.zip",
+      "size": 37845757,
+      "digest": "sha256:20954cbad1a4626436c6ebaed5e48477f68427b075934689f360301ac426a2f1"
+    }
+  ]
+}

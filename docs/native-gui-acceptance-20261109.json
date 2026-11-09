@@ -1,0 +1,75 @@
+{
+  "recordedAt": "2026-11-09T13:48:14.120120+08:00",
+  "surface": "packaged Tauri application, native macOS WebKit, tauri://localhost",
+  "automation": "CUA native application controls; no browser IPC fixtures",
+  "earlierTestedAppExecutableSha256": "ad91bb0607dee0a3daa9dd0cb0f297dfb95a303121e7f53c4eb92e4ab2690970",
+  "checks": {
+    "nativeWindowRendered": true,
+    "workspaceSettingsSavedAndRestoredAfterRestart": true,
+    "fileListAndRawEditor": true,
+    "fileSaveExactUtf8Content": true,
+    "fileSha256AfterGuiSave": "a62d902780d63644cdf336ddc0905c33a4e076a65d536af4ca0a6ac729bff802",
+    "terminalFirstChunkBeforeProcessExit": true,
+    "normalExitCode": 0,
+    "guiStopButton": {
+      "cancelled": true,
+      "exitCode": null,
+      "timedOut": false,
+      "lateMarkerAbsentInStdout": true
+    },
+    "unreachableDefaultModelServiceShowsActualError": true,
+    "deviceCapabilities": {
+      "bundledNode": true,
+      "nodeVersion": "v24.22.1",
+      "helperFound": true,
+      "browserReady": false,
+      "accessibility": false,
+      "screenCapture": false
+    },
+    "desktopPermissionsChanged": false,
+    "savedFileAndWorkspaceRestoredInRebuiltApp": true
+  },
+  "terminalArtifacts": {
+    "stop": {
+      "path": "$HOME/Library/Application Support/dev.gemmaharness.desktop/artifacts/fd01c7b5-c72b-4a69-9033-f034cf639970-stdout.txt",
+      "text": "NATIVE_GUI_STOP_START\n",
+      "lateMarkerAbsent": true
+    },
+    "normal": {
+      "path": "$HOME/Library/Application Support/dev.gemmaharness.desktop/artifacts/bc604556-df4f-486e-bed2-477ea906c028-stdout.txt",
+      "text": "NATIVE_GUI_STREAM_START\nNATIVE_GUI_STREAM_END\n",
+      "bothMarkers": true
+    }
+  },
+  "testWorkspace": "$HOME/Harness/.harness/native-gui-acceptance",
+  "discoveredIssue": {
+    "terminalDidNotFollowLatestOutput": true,
+    "fix": "terminal-only follow/pause/resume implementation",
+    "automatedRegressionsPassed": 2,
+    "finalNativeRetest": "passed_auto_follow_pause_and_reopen",
+    "lateOutputWhileReadingDidNotJump": true,
+    "reopenShowsLatestResult": true,
+    "fullOutputArtifact": {
+      "path": "$HOME/Library/Application Support/dev.gemmaharness.desktop/artifacts/6cfa7221-e42a-4c1f-a229-ac84a810afab-stdout.txt",
+      "exactOutputMatch": true,
+      "lineCount": 61,
+      "sha256": "e9d94c36875d81544142cd336f19c1fa5fbb0d13ae3979231ae93661c250451d"
+    },
+    "scrollRetestBuild": "Intermediate scroll-fix app build; exact executable hash was not captured before the binding-fix rebuild. Terminal implementation unchanged in final build and all 16 UI regressions passed."
+  },
+  "limitations": [
+    "No live model inference",
+    "No Harness AX/ScreenCaptureKit desktop actions: OS permission remains unavailable",
+    "Windows/Linux acceptance unchanged"
+  ],
+  "secondDiscoveredIssue": {
+    "staleEditorAfterWorkspaceClear": true,
+    "fix": "execution-binding-scoped inspector reset with stale-response guards",
+    "automatedRegressionsPassed": 5,
+    "finalNativeRetest": "passed_open_fixture_then_clear_workspace_editor_absent"
+  },
+  "completedAt": "2026-11-09T14:06:19.830009+08:00",
+  "finalPackagedAppExecutableSha256": "7d70f8b58ed99a7e3f1740d7a5dc8bf422693d0286aa3f4df968e0eb0228c3d7",
+  "finalDmgSha256": "8b85faed7e49e51b548e2d561947d421b92f264123c39edb68861cd175cc1b0a",
+  "testWorkspaceSelectionRestored": true
+}

@@ -1,0 +1,158 @@
+{
+  "generatedAt": "2026-11-09T15:26:27.936193+08:00",
+  "status": "development_build_engineering_checks_passed_acceptance_incomplete",
+  "host": {
+    "os": "macOS 27.0.1",
+    "architecture": "arm64",
+    "chip": "Apple M4",
+    "memoryBytes": 17179869184,
+    "clientTimezone": "Asia/Shanghai"
+  },
+  "artifact": {
+    "app": "$HOME/Harness/target/release/bundle/macos/Gemma Harness.app",
+    "dmg": "$HOME/Harness/target/release/bundle/dmg/Gemma Harness_0.3.0_aarch64.dmg",
+    "dmgBytes": 55756711,
+    "dmgSha256": "a30010f4ce757f12c9a840f30d7d26a1a3a8145af829700e89d1b0080dc05103",
+    "appAdHocSignatureVerified": true,
+    "dmgChecksumVerified": true,
+    "developerIdSigned": false,
+    "notarized": false,
+    "minimumMacOS": "14.0",
+    "appMainExecutableSha256": "a4582202b0259f7a81b58aa1c599f249cde851570aef4ccf7d603d75fff718cc",
+    "version": "0.3.0"
+  },
+  "checks": {
+    "rust": {
+      "passed": 125,
+      "failed": 0,
+      "defaultIgnored": 1,
+      "breakdown": {
+        "coreUnit": 37,
+        "agentIntegration": 17,
+        "diagnosticCancellation": 1,
+        "manualStream": 1,
+        "mcpInitializationCancellation": 1,
+        "projectIntegration": 4,
+        "executor": 11,
+        "model": 43,
+        "remote": 10
+      },
+      "ignoredBrowserTestSeparatelyPassedWithExistingCache": true,
+      "freshBrowserDownloadLastVerifiedInVersion": "0.1.0",
+      "ignoredBrowserBridgeLastValidatedVersion": "0.2.0"
+    },
+    "uiChromium": {
+      "passed": 34,
+      "failed": 0,
+      "nativeGui": false,
+      "ipcFixturesExplicit": true
+    },
+    "browserRealChromium": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "lastValidatedVersion": "0.2.0"
+    },
+    "clippyAllTargetsDenyWarnings": "passed",
+    "typescriptAndViteBuild": "passed",
+    "rustfmt": "passed",
+    "windowsNativeHelperCrossCheck": "passed_not_runtime",
+    "linuxNativeHelperCrossCheck": "passed_not_runtime",
+    "npmRuntimeAuditHighSeverityFindings": 0,
+    "nativeGuiManual": {
+      "status": "passed_customization_scope_v0.3.0",
+      "surface": "packaged Tauri macOS WebKit / tauri://localhost",
+      "usedIpcFixtures": false,
+      "versionBadge": "0.3",
+      "appearancePreviewAndSave": true,
+      "appearanceAndRenameSurviveRestart": true,
+      "projectRegistrationFromDirectorySettings": true,
+      "projectNameChangesWithoutPathChange": true,
+      "removeCurrentProjectClearsSelection": true,
+      "removePersistsAfterRestart": true,
+      "actualFilePreservedOnDisk": true,
+      "originalWorkspaceAndAppearanceRestored": true,
+      "evidence": "docs/native-customization-0.3.0.json",
+      "scopeExcludesHarnessDesktopAutomation": true
+    },
+    "executorCrossCheck": {
+      "windows": "passed",
+      "linux": "passed",
+      "runtimeAcceptance": false,
+      "lastValidatedVersion": "0.2.0"
+    },
+    "remoteTestRefinement": {
+      "initialFailure": "asserted exactly two OS output chunks; observed three without payload capture",
+      "productionChangeRequired": false,
+      "replacementChecks": [
+        "monotonic unique cursors",
+        "client/journal event agreement",
+        "per-stream bytes identical to complete artifacts",
+        "one real command start",
+        "body markers exactly once"
+      ],
+      "finalFullSuitePassed": true
+    }
+  },
+  "runtimeSmoke": {
+    "version": "b12211",
+    "reportedVersion": "0.9.0-dev (build 12211, commit 7d7f02875)",
+    "downloadSha256Verified": true,
+    "executableSelfTest": "passed",
+    "modelWeightsLoaded": false,
+    "actualDevices": [
+      "MTL0 Apple M4",
+      "BLAS Accelerate"
+    ]
+  },
+  "nativeAppLaunch": {
+    "processObserved": true,
+    "databaseInitialized": true,
+    "guiInteraction": "passed_native_customization_scope_v0.3.0",
+    "mainProcessRssMeasured": false,
+    "priorFullWorkbenchEvidence": "docs/native-gui-acceptance-20261109.json"
+  },
+  "targetModel": {
+    "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+    "profileRevision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+    "actualQuantization": "unknown",
+    "windowsLmStudioEndpoint": "unreachable_user_confirmed",
+    "realModelTaskAccuracy": "not_measured",
+    "certified": false
+  },
+  "pending": [
+    "macOS AX/screen permissions and real desktop tasks",
+    "Windows/Linux application packages and installed desktop acceptance",
+    "GNOME X11/Wayland and KDE Plasma 6 Wayland runtime acceptance",
+    "exact Windows model/template/mmproj/runtime identity and task benchmarks",
+    "public signing/notarization",
+    "user repository CI has not run"
+  ],
+  "resolvedSinceInitialDelivery": [
+    "Mac unlocked; native workbench manually verified",
+    "Fixed terminal output follow/pause/reopen; 2 new UI regressions",
+    "Fixed stale inspector on execution binding changes and late responses; 5 new UI regressions",
+    "0.2.0 shared cancellable inference admission and diagnostics",
+    "checkpoint SQL replay, borrowed image estimates and calibrated summary budget",
+    "bounded optional tool schemas and aggregate text previews with artifacts",
+    "strict stream completion and explicit optional-parameter negotiation",
+    "bounded cancellable worker/MCP IO and indeterminate action stop",
+    "batched/memoized GUI, preserved history reading, performance panel and canonical configuration saves",
+    "user task persisted before model/MCP initialization",
+    "0.3.0 persisted theme/font/accent preferences with preview rollback and active-task save",
+    "durable project registry, migration, display-name rename and non-destructive remove",
+    "atomic registry/config commits and operation/binding admission guard"
+  ],
+  "version": "0.3.0",
+  "performanceProbe": {
+    "evidence": "docs/performance-upgrade-20261109.json",
+    "synthetic": true,
+    "modelGenerationMeasured": false
+  },
+  "previousVersionEvidence": "docs/verification-0.2.0.json",
+  "remainingOptimizations": [
+    "GUI source-event pagination; current 80-item window bounds DOM only",
+    "raw log/artifact disk-retention controls",
+    "exact backend tokenizer integration with fixed deployment validation"
+  ]
+}

@@ -1,0 +1,88 @@
+name: Build prerelease installers
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-15
+            bundles: app
+          - target: macos-x64
+            os: macos-15-intel
+            bundles: app
+          - target: windows-x64
+            os: windows-2022
+            bundles: nsis,msi
+          - target: linux-x64
+            os: ubuntu-24.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install Linux development libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libdbus-1-dev libpipewire-0.3-dev libxtst-dev
+      - run: npm ci
+      - run: npm run setup:workers
+      - name: Build installer
+        shell: bash
+        run: npm run desktop:build -- --bundles '${{ matrix.bundles }}'
+      - name: Collect platform installers
+        run: node scripts/release-assets.mjs collect '${{ matrix.target }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify installer set and checksums
+        run: node scripts/release-assets.mjs verify-local
+      - name: Upload and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --json isDraft --jq .isDraft > /tmp/release-state; then
+            test "$(cat /tmp/release-state)" = true || { echo 'Release already published; refusing to overwrite it.'; exit 1; }
+          else
+            gh release create "$TAG" --verify-tag --draft --prerelease --title "Gemma Harness $TAG" --notes-file docs/release-notes.md
+          fi
+          gh release upload "$TAG" release-assets/* --clobber
+          gh release view "$TAG" --json isDraft,isPrerelease,assets > release-remote.json
+          node scripts/release-assets.mjs verify-remote
+          gh release edit "$TAG" --draft=false --prerelease
