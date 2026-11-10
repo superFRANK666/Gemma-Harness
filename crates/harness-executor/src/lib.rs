@@ -638,13 +638,15 @@ impl Executor {
             if !actual.eq_ignore_ascii_case(&expected) {
                 bail!("File changed since inspection; inspect it again before deletion");
             }
-            let mut metadata =
+            let metadata =
                 json!({"version":1,"sha256":actual,"readonly":source_permissions.readonly()});
             #[cfg(unix)]
-            {
+            let metadata = {
                 use std::os::unix::fs::PermissionsExt;
+                let mut metadata = metadata;
                 metadata["unix_mode"] = json!(source_permissions.mode());
-            }
+                metadata
+            };
             let mut manifest_options = std::fs::OpenOptions::new();
             manifest_options.write(true).create_new(true);
             #[cfg(unix)]
