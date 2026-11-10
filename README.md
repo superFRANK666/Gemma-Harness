@@ -15,10 +15,12 @@
 
 ## Gemma 适配性
 
-[OpenCode](https://opencode.ai/docs/models/) 和 [Aider](https://aider.chat/docs/llms/ollama.html) 等通用编程工具也能连接本地模型；OpenCode 的文档还列出了 Gemma 示例。Gemma Harness 将 Gemma 作为首要适配目标，提供针对模型系列和推理后端的专门处理：
+Gemma Harness 以 Gemma 为首要适配目标。下表比较各项目公开文档中的模型接入方式，以及本项目面向 Gemma 的区别：
 
-- 支持选择 Gemma 4、Gemma 3 和 FunctionGemma 系列；针对 FunctionGemma 处理其原生函数调用格式，并在执行前校验工具参数。
-- 在 Gemma 4 与 llama.cpp 的 Chat Completions 组合下提供思考模式控制；针对图片输入和图片工具结果分别运行诊断，通过后才发送图片。
-- 针对工具调用、上下文预算及模型输出提供检查和恢复机制，并保留任务过程和原始会话历史。
+| 对比对象 | 对方的模型接入方式 | Gemma Harness 的区别 |
+| --- | --- | --- |
+| [Codex](https://learn.chatgpt.com/docs/config-file/config-advanced#oss-mode-local-providers) | 支持通过 `--oss` 使用 Ollama 或 LM Studio，也可配置其他模型服务；具体模型能否正常工作取决于服务和模型。 | 可选择 Gemma 4、Gemma 3 或 FunctionGemma 系列及推理后端；针对 FunctionGemma 解析原生函数格式，并在执行前校验工具参数。 |
+| [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/guide/providers) | 支持自建服务及 OpenAI Chat Completions、Responses 等自定义 API，可配置模型的图片输入类型。 | 提供可管理的本地 llama.cpp 和 GGUF 模型接入；分别诊断图片输入与图片工具结果，未通过诊断时不向模型发送图片。 |
+| [Claude Code](https://code.claude.com/docs/en/llm-gateway) | 官方主要面向 Claude；Anthropic 不支持通过网关将 Claude Code 路由到非 Claude 模型。 | 面向 Gemma 直接连接 LM Studio 或 llama.cpp；在 Gemma 4 与 llama.cpp 的 Chat Completions 组合下提供思考模式开关。 |
 
-这些适配不等于所有 Gemma 权重和后端都已验证，也不代表任务效果一定优于其他工具：目前没有同条件的横向对照评测。模型质量、量化、模板和运行环境都会影响结果；实测范围和局限见 [Gemma 适配与验证](docs/gemma-adaptation.md)。
+这些区别描述的是模型接入与适配设计，不代表其他工具没有类似能力，也不代表本项目的任务效果更好。目前没有使用相同模型、推理服务和任务集进行横向对照；具体表现取决于权重、量化、模板和运行环境。实测范围和局限见 [Gemma 适配与验证](docs/gemma-adaptation.md)。
