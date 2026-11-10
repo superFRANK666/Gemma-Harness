@@ -1,0 +1,118 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import { ArrowDownToLine, Loader2, RefreshCw, X } from 'lucide-react';
+
+const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+type Phase = 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error' | 'installed';
+
+export default function UpdateControl({ beginInstall, endInstall }: {
+  beginInstall: () => string | null;
+  endInstall: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [version, setVersion] = useState('');
+  const [message, setMessage] = useState('');
+  const [progress, setProgress] = useState<number | null>(null);
+  const updateRef = useRef<Update | null>(null);
+  const downloadedRef = useRef(false);
+  const checkingRef = useRef(false);
+  const showCheckRef = useRef(false);
+  const workingRef = useRef(false);
+  const mountedRef = useRef(false);
+  const callbacksRef = useRef({ beginInstall, endInstall });
+  callbacksRef.current = { beginInstall, endInstall };
+
+  const checkForUpdate = useCallback(async (manual: boolean) => {
+    if (workingRef.current || (!manual && updateRef.current)) return;
+    if (manual) { showCheckRef.current = true; setOpen(true); setPhase('checking'); setMessage(''); }
+    if (checkingRef.current) return;
+    checkingRef.current = true;
+    try {
+      const update = await check({ timeout: 15000 });
+      if (!mountedRef.current) { if (update) await update.close().catch(() => {}); return; }
+      const previous = updateRef.current;
+      updateRef.current = update;
+      downloadedRef.current = false;
+      if (previous) void previous.close().catch(() => {});
+      if (update) {
+        setVersion(update.version); setPhase('available'); setMessage(''); setOpen(true);
+      } else {
+        setVersion(''); setPhase('current'); setMessage('');
+      }
+    } catch (error) {
+      if (mountedRef.current && showCheckRef.current) { setPhase('error'); setMessage(error instanceof Error ? error.message : String(error)); }
+    } finally { checkingRef.current = false; showCheckRef.current = false; }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const initial = setTimeout(() => void checkForUpdate(false), 3000);
+    const interval = setInterval(() => void checkForUpdate(false), CHECK_INTERVAL);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(initial); clearInterval(interval);
+      const update = updateRef.current; updateRef.current = null;
+      if (update && !workingRef.current) void update.close().catch(() => {});
+    };
+  }, [checkForUpdate]);
+
+  async function installDownloaded(update: Update) {
+    const reason = callbacksRef.current.beginInstall();
+    if (reason) { setPhase('downloaded'); setMessage(reason); setOpen(true); return; }
+    let installed = false;
+    try {
+      setPhase('installing'); setMessage('');
+      await invoke('prepare_app_update');
+      await update.install();
+      installed = true;
+      await relaunch();
+      if (mountedRef.current) { setPhase('installed'); setMessage('更新已安装，请退出并重新打开应用。'); }
+    } catch (error) {
+      if (mountedRef.current) {
+        setPhase(installed ? 'installed' : 'downloaded');
+        setMessage(installed ? '更新已安装，但未能自动重启，请手动重新打开应用。' : `安装失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally { callbacksRef.current.endInstall(); }
+  }
+
+  async function downloadAndInstall() {
+    const update = updateRef.current;
+    if (!update || workingRef.current) return;
+    workingRef.current = true; setMessage('');
+    try {
+      if (!downloadedRef.current) {
+        setPhase('downloading'); setProgress(null);
+        let downloaded = 0; let total: number | undefined;
+        await update.download(event => {
+          if (event.event === 'Started') total = event.data.contentLength;
+          else if (event.event === 'Progress') { downloaded += event.data.chunkLength; if (total && mountedRef.current) setProgress(Math.min(100, Math.round(downloaded / total * 100))); }
+        }, { timeout: 600000 });
+        downloadedRef.current = true;
+      }
+      if (mountedRef.current) await installDownloaded(update);
+    } catch (error) {
+      if (mountedRef.current) { setPhase('available'); setMessage(`下载失败：${error instanceof Error ? error.message : String(error)}`); }
+    } finally { workingRef.current = false; }
+  }
+
+  const actionLabel = phase === 'available' ? '下载并安装' : '安装并重启';
+  return <div className="update-anchor">
+    <button type="button" className="update-trigger" aria-expanded={open} onClick={() => { if (phase === 'idle' || phase === 'current' || phase === 'error') void checkForUpdate(true); else setOpen(value => !value); }}>
+      <RefreshCw size={12} />{phase === 'available' || phase === 'downloaded' ? '发现更新' : phase === 'downloading' ? '正在下载更新' : '检查更新'}
+    </button>
+    {open && <section className="update-panel" aria-label="应用更新" role="region">
+      <header><strong>应用更新</strong><button className="icon-button" type="button" aria-label="关闭更新提示" disabled={phase === 'installing'} onClick={() => setOpen(false)}><X size={14} /></button></header>
+      {phase === 'checking' && <p><Loader2 size={13} className="spin" /> 正在检查更新…</p>}
+      {phase === 'current' && <p>当前已是最新版本。</p>}
+      {(phase === 'available' || phase === 'downloading' || phase === 'downloaded' || phase === 'installing') && <><p>发现新版本 <strong>{version}</strong></p><small>安装时应用会重启；请先保存编辑内容并结束正在运行的任务。</small></>}
+      {phase === 'downloading' && <p role="status"><Loader2 size={13} className="spin" /> 正在下载{progress === null ? '…' : ` · ${progress}%`}</p>}
+      {phase === 'installing' && <p role="status"><Loader2 size={13} className="spin" /> 正在安装并重启…</p>}
+      {message && <p className="update-message" role="status">{message}</p>}
+      {(phase === 'available' || phase === 'downloaded') && <button className="primary-button" type="button" onClick={() => void downloadAndInstall()}><ArrowDownToLine size={14} />{actionLabel}</button>}
+      {(phase === 'error' || phase === 'current') && <button className="secondary-button" type="button" onClick={() => void checkForUpdate(true)}>重新检查</button>}
+    </section>}
+  </div>;
+}

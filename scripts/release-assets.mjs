@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -11,8 +12,8 @@ const { version } = JSON.parse(await fs.readFile(path.join(root, 'package.json')
 const tauri = JSON.parse(await fs.readFile(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
 const cargo = await fs.readFile(path.join(root, 'Cargo.toml'), 'utf8');
 const cargoVersion = cargo.match(/\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m)?.[1];
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version) || tauri.version !== version || cargoVersion !== version) {
-  throw new Error('Package, Tauri, and Rust workspace versions must match.');
+if (!/^\d+\.\d+\.\d+$/.test(version) || tauri.version !== version || cargoVersion !== version) {
+  throw new Error('Package, Tauri, and Rust workspace versions must match a numeric SemVer.');
 }
 if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
   throw new Error(`Release tag must be v${version}.`);
@@ -20,12 +21,36 @@ if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v$
 
 const prefix = `Gemma-Harness-v${version}`;
 const targets = {
-  'macos-arm64': { platform: 'darwin', arch: 'arm64', files: [['dmg', '.dmg', `${prefix}-macOS-arm64.dmg`]] },
-  'macos-x64': { platform: 'darwin', arch: 'x64', files: [['dmg', '.dmg', `${prefix}-macOS-x64.dmg`]] },
-  'windows-x64': { platform: 'win32', arch: 'x64', files: [['nsis', '.exe', `${prefix}-Windows-x64-setup.exe`], ['msi', '.msi', `${prefix}-Windows-x64.msi`]] },
-  'linux-x64': { platform: 'linux', arch: 'x64', files: [['deb', '.deb', `${prefix}-Linux-x64.deb`], ['appimage', '.AppImage', `${prefix}-Linux-x64.AppImage`]] },
+  'macos-arm64': { platform: 'darwin', arch: 'arm64', files: [
+    ['dmg', '.dmg', `${prefix}-macOS-arm64.dmg`, true],
+    ['macos', '.app.tar.gz', `${prefix}-macOS-arm64.app.tar.gz`, false],
+  ] },
+  'macos-x64': { platform: 'darwin', arch: 'x64', files: [
+    ['dmg', '.dmg', `${prefix}-macOS-x64.dmg`, true],
+    ['macos', '.app.tar.gz', `${prefix}-macOS-x64.app.tar.gz`, false],
+  ] },
+  'windows-x64': { platform: 'win32', arch: 'x64', files: [
+    ['nsis', '.exe', `${prefix}-Windows-x64-setup.exe`, true],
+    ['msi', '.msi', `${prefix}-Windows-x64.msi`, true],
+  ] },
+  'linux-x64': { platform: 'linux', arch: 'x64', files: [
+    ['deb', '.deb', `${prefix}-Linux-x64.deb`, true],
+    ['appimage', '.AppImage', `${prefix}-Linux-x64.AppImage`, true],
+  ] },
 };
-const expected = Object.values(targets).flatMap(target => target.files.map(file => file[2]));
+const updates = {
+  'darwin-aarch64-app': `${prefix}-macOS-arm64.app.tar.gz`,
+  'darwin-x86_64-app': `${prefix}-macOS-x64.app.tar.gz`,
+  'windows-x86_64-nsis': `${prefix}-Windows-x64-setup.exe`,
+  'windows-x86_64-msi': `${prefix}-Windows-x64.msi`,
+  'linux-x86_64-deb': `${prefix}-Linux-x64.deb`,
+  'linux-x86_64-appimage': `${prefix}-Linux-x64.AppImage`,
+};
+const packageNames = Object.values(targets).flatMap(target => target.files.map(file => file[2]));
+const signatures = Object.values(updates).map(name => `${name}.sig`);
+const sourceAssets = [...packageNames, ...signatures];
+const publishedAssets = [...sourceAssets, 'latest.json', 'SHA256SUMS'];
+const downloadRoot = `https://github.com/superFRANK666/Gemma-Harness/releases/download/v${version}/`;
 
 async function walk(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -44,13 +69,21 @@ async function collect(targetName) {
   if (process.platform !== target.platform || process.arch !== target.arch) {
     throw new Error(`${targetName} requires ${target.platform}/${target.arch}; got ${process.platform}/${process.arch}.`);
   }
+  if (!process.env.TAURI_SIGNING_PRIVATE_KEY || !process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+    throw new Error('Release signing key and password are required.');
+  }
   await fs.mkdir(assetDir, { recursive: true });
-  for (const [directory, extension, destination] of target.files) {
+  for (const [directory, extension, destination, versioned] of target.files) {
     const matches = (await walk(path.join(bundleDir, directory))).filter(file =>
-      file.endsWith(extension) && path.basename(file).includes(version));
+      file.endsWith(extension) && (!versioned || path.basename(file).includes(version)));
     if (matches.length !== 1) throw new Error(`Expected exactly one ${extension} for ${version}; found ${matches.length}.`);
     if ((await fs.stat(matches[0])).size === 0) throw new Error(`Empty package: ${matches[0]}`);
-    await fs.copyFile(matches[0], path.join(assetDir, destination));
+    const dest = path.join(assetDir, destination);
+    await fs.copyFile(matches[0], dest);
+    if (Object.values(updates).includes(destination)) {
+      const signer = spawnSync(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), 'signer', 'sign', '--app-version', version, dest], { cwd: root, stdio: 'ignore' });
+      if (signer.error || signer.status !== 0) throw new Error(`Failed to sign ${destination}.`);
+    }
     process.stdout.write(`Collected ${destination}\n`);
   }
 }
@@ -62,33 +95,47 @@ async function sha256(file) {
 }
 
 async function verifyLocal() {
-  const names = (await fs.readdir(assetDir)).filter(name => name !== 'SHA256SUMS').sort();
-  if (JSON.stringify(names) !== JSON.stringify([...expected].sort())) {
-    throw new Error(`Release needs exactly these six installers: ${expected.join(', ')}; found: ${names.join(', ')}`);
+  const names = (await fs.readdir(assetDir)).filter(name => name !== 'SHA256SUMS' && name !== 'latest.json').sort();
+  if (JSON.stringify(names) !== JSON.stringify([...sourceAssets].sort())) {
+    throw new Error(`Release asset set is incomplete or unexpected: ${names.join(', ')}`);
   }
-  const sums = [];
-  for (const name of expected) {
-    const file = path.join(assetDir, name);
-    const stat = await fs.lstat(file);
+  for (const name of sourceAssets) {
+    const stat = await fs.lstat(path.join(assetDir, name));
     if (!stat.isFile() || stat.size === 0) throw new Error(`Not a nonempty file: ${name}`);
-    sums.push(`${await sha256(file)}  ${name}`);
   }
+  const platforms = {};
+  for (const [platform, name] of Object.entries(updates)) {
+    const signature = (await fs.readFile(path.join(assetDir, `${name}.sig`), 'utf8')).trim();
+    const decoded = Buffer.from(signature, 'base64').toString('utf8');
+    if (!decoded.split('\n').some(line => line.startsWith('trusted comment: ') && line.split(/\s+/).includes(`version:${version}`))) {
+      throw new Error(`Update signature lacks the expected version: ${name}`);
+    }
+    platforms[platform] = { url: downloadRoot + encodeURIComponent(name), signature };
+  }
+  const manifest = { version, notes: '包含应用界面更新与签名验证的应用内更新。', platforms };
+  await fs.writeFile(path.join(assetDir, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  const sums = [];
+  for (const name of [...sourceAssets, 'latest.json']) sums.push(`${await sha256(path.join(assetDir, name))}  ${name}`);
   await fs.writeFile(path.join(assetDir, 'SHA256SUMS'), `${sums.join('\n')}\n`);
-  process.stdout.write('Verified all six installers and generated SHA256SUMS.\n');
+  process.stdout.write('Verified installer set, signature metadata, update manifest, and SHA256SUMS.\n');
 }
 
 async function verifyRemote() {
   const remotePath = process.env.HARNESS_RELEASE_REMOTE || path.join(root, 'release-remote.json');
   const remote = JSON.parse(await fs.readFile(remotePath, 'utf8'));
-  if (!remote.isDraft || !remote.isPrerelease) throw new Error('The release must be a prerelease draft during verification.');
-  const expectedNames = [...expected, 'SHA256SUMS'].sort();
-  const remoteNames = remote.assets.map(asset => asset.name).sort();
-  if (JSON.stringify(remoteNames) !== JSON.stringify(expectedNames)) throw new Error('Uploaded release assets do not match the expected set.');
-  for (const asset of remote.assets) {
-    const size = (await fs.stat(path.join(assetDir, asset.name))).size;
-    if (!size || asset.size !== size) throw new Error(`Uploaded asset size mismatch: ${asset.name}`);
+  if ((!remote.isDraft && process.env.HARNESS_ALLOW_PUBLISHED_RELEASE !== '1') || !remote.isPrerelease) {
+    throw new Error('The release must be a prerelease draft during upload verification.');
   }
-  process.stdout.write('Verified all uploaded release assets.\n');
+  const names = remote.assets.map(asset => asset.name).sort();
+  if (JSON.stringify(names) !== JSON.stringify([...publishedAssets].sort())) throw new Error('Uploaded release assets do not match the expected set.');
+  for (const asset of remote.assets) {
+    const file = path.join(assetDir, asset.name);
+    const size = (await fs.stat(file)).size;
+    if (!size || asset.size !== size || asset.digest !== `sha256:${await sha256(file)}`) {
+      throw new Error(`Uploaded asset digest or size mismatch: ${asset.name}`);
+    }
+  }
+  process.stdout.write('Verified all uploaded release asset digests.\n');
 }
 
 const [command, argument] = process.argv.slice(2);

@@ -1,7 +1,7 @@
 name: Verify
 on:
   push:
-    branches: ['**']
+    branches-ignore: ['update-channel']
   pull_request:
   workflow_dispatch:
 permissions:

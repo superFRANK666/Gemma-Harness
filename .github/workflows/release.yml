@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   package:
     name: Package ${{ matrix.target }}
@@ -43,9 +47,15 @@ jobs:
       - run: npm ci
       - run: npm run setup:workers
       - name: Build installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
-        run: npm run desktop:build -- --bundles '${{ matrix.bundles }}'
+        run: npm run desktop:build -- --bundles '${{ matrix.bundles }}' --config '{"bundle":{"createUpdaterArtifacts":true}}'
       - name: Collect platform installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/release-assets.mjs collect '${{ matrix.target }}'
       - uses: actions/upload-artifact@v4
         with:
@@ -64,6 +74,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
       - name: Wait for verification of the release commit
         timeout-minutes: 32
         env:
@@ -88,6 +99,8 @@ jobs:
           merge-multiple: true
       - name: Verify installer set and checksums
         run: node scripts/release-assets.mjs verify-local
+      - name: Verify updater signatures and signed versions
+        run: cargo run --locked -p harness-update-verify -- release-assets
       - name: Upload and publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,11 +109,21 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" --json isDraft --jq .isDraft > /tmp/release-state; then
-            test "$(cat /tmp/release-state)" = true || { echo 'Release already published; refusing to overwrite it.'; exit 1; }
+            state=$(cat /tmp/release-state)
           else
             gh release create "$TAG" --verify-tag --draft --prerelease --title "Gemma Harness $TAG" --notes-file docs/release-notes.md
+            state=true
           fi
-          gh release upload "$TAG" release-assets/* --clobber
-          gh release view "$TAG" --json isDraft,isPrerelease,assets > release-remote.json
-          node scripts/release-assets.mjs verify-remote
-          gh release edit "$TAG" --draft=false --prerelease
+          if [ "$state" = true ]; then
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release view "$TAG" --json isDraft,isPrerelease,assets > release-remote.json
+            node scripts/release-assets.mjs verify-remote
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release view "$TAG" --json isDraft,isPrerelease,assets > release-remote.json
+            HARNESS_ALLOW_PUBLISHED_RELEASE=1 node scripts/release-assets.mjs verify-remote
+          fi
+      - name: Publish update channel after release verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-update-channel.mjs

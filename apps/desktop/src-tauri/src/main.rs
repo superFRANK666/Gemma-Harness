@@ -50,9 +50,16 @@ async fn stream_tool(
         .await
         .map_err(|e| format!("{e:#}"))
 }
+#[tauri::command]
+async fn prepare_app_update(state: State<'_, Arc<Harness>>) -> Result<(), String> {
+    state.inner().shutdown().await;
+    Ok(())
+}
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             if let Ok(resource) = app.path().resource_dir() {
@@ -63,7 +70,12 @@ fn main() {
             app.manage(Harness::open(dir)?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![command, stream_turn, stream_tool])
+        .invoke_handler(tauri::generate_handler![
+            command,
+            stream_turn,
+            stream_tool,
+            prepare_app_update
+        ])
         .build(tauri::generate_context!())
         .expect("Cannot initialize Gemma Harness")
         .run(|app, event| {

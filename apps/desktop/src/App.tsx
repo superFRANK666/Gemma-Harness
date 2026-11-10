@@ -10,6 +10,7 @@ import { applyAppearance } from './appearance';
 import ActivityCard from './components/ActivityCard';
 import PerformancePanel, { applyUsage, initialUsage, numberValue, QueueElapsed, readMetrics } from './components/PerformancePanel';
 import type { CompactionInfo, ModelMetrics } from './components/PerformancePanel';
+import UpdateControl from './components/UpdateControl';
 
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || '未选择项目';
 function Mark({ small = false }: { small?: boolean }) { return <span className={`brand-mark ${small ? 'small' : ''}`}><i /><i /><i /></span>; }
@@ -80,6 +81,7 @@ export default function App() {
   const [command, setCommand] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalBusy, setTerminalBusy] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
   const [terminalOperation, setTerminalOperation] = useState('');
   const [filter, setFilter] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -106,7 +108,7 @@ export default function App() {
   const pendingEventsRef = useRef<Json[]>([]);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bindingBusyRef = useRef(false);
-  bindingBusyRef.current = running || terminalBusy || projectBusy;
+  bindingBusyRef.current = running || terminalBusy || projectBusy || updateInstalling;
   const configRef = useRef(config); configRef.current = config;
   const connection = config.connections.find(c => c.id === (current?.connectionId || config.selectedConnectionId));
   const modelId = connection?.model?.trim() || '';
@@ -421,9 +423,20 @@ export default function App() {
     finally { bindingBusyRef.current = false; setTerminalBusy(false); setTerminalOperation(''); }
   }
 
+  function beginUpdateInstall(): string | null {
+    if (bindingBusyRef.current) return '请先停止当前任务或终端命令，再安装更新。';
+    if (file && fileText !== file.text) return '请先保存正在编辑的文件，再安装更新。';
+    if (input || attachments.length || command) return '请先发送或清空未提交的消息、图片和终端命令。';
+    if (settings || projectDialog) return '请先关闭设置或项目操作，再安装更新。';
+    bindingBusyRef.current = true; setUpdateInstalling(true); return null;
+  }
+  function endUpdateInstall() {
+    bindingBusyRef.current = false; setUpdateInstalling(false);
+  }
+
   const entries = Array.isArray(files?.entries) ? files.entries as Json[] : [];
   return <div className="app-shell">
-    <aside className="sidebar">
+    <aside className="sidebar" inert={updateInstalling || undefined}>
       <div className="traffic-space" data-tauri-drag-region />
       <div className="brand"><Mark small /><span>harness</span></div>
       <button className="new-chat" onClick={startNewChat}><Plus size={17} /> 新会话 <kbd>{shortcut} N</kbd></button>
@@ -436,7 +449,7 @@ export default function App() {
       <div className="session-list">{sessions.filter(s => s.title.toLowerCase().includes(filter.toLowerCase())).map(session => <button key={session.id} className={`session-item ${current?.id === session.id ? 'selected' : ''}`} onClick={() => void openSession(session)}><Circle size={7} fill="currentColor" /><span>{session.title}</span>{session.deviceId !== 'local' && <Monitor size={12} />}</button>)}</div>
       <div className="sidebar-bottom"><button className="device-button" onClick={() => setSettings('devices')}><span className="device-icon"><Monitor size={16} /></span><span><strong>{deviceName}执行</strong><small>{deviceId === 'local' ? '文件、终端与桌面' : '已配对的执行设备'}</small></span><ChevronDown size={13} /></button><button className="nav-item settings-nav" onClick={() => setSettings('models')}><Settings2 size={16} /> 设置与连接 <span>{shortcut} ,</span></button></div>
     </aside>
-    <main className="main-area">
+    <main className="main-area" inert={updateInstalling || undefined}>
       <header className="topbar"><div className="breadcrumb"><Menu size={16} /><span>{workspace ? workspaceName : '工作台'}</span><ChevronRight size={13} /><strong>{current?.title || '新会话'}</strong></div><div className="topbar-actions"><button className="model-pill" onClick={() => setSettings('models')}><span className={`status-dot ${modelId ? 'configured' : ''}`} /><span>{modelId ? connection?.name : '连接模型'}</span><ChevronDown size={12} /></button><div className="topbar-separator" /><IconButton label={panelOpen ? '隐藏详情' : '显示详情'} onClick={() => setPanelOpen(!panelOpen)} active={panelOpen}><PanelRightClose size={17} /></IconButton></div></header>
       {!desktop && <div className="preview-banner"><Monitor size={13} /> 桌面界面预览 <span>模型与系统工具在桌面应用中连接</span></div>}
       <div className="work-area"><section className="conversation">
@@ -471,8 +484,9 @@ export default function App() {
         terminalScrollTopRef.current = output.scrollTop;
       }}>{terminal ?? '命令将在当前会话绑定的执行设备上运行。'}</pre><form onSubmit={e => { e.preventDefault(); void runCommand(); }}><span>❯</span><input aria-label="终端命令" placeholder={workspace ? '输入命令…' : '请先选择项目'} value={command} onChange={e => setCommand(e.target.value)} disabled={!workspace || terminalBusy || running || projectBusy} />{terminalBusy && <button type="button" className="terminal-stop" aria-label="停止终端命令" onClick={() => void api('interrupt', { sessionId: terminalOperation }).catch(notify)}><Square size={12} fill="currentColor" />停止</button>}</form></section>}
       {performanceOpen && <PerformancePanel usage={usage} metrics={metrics} queueSince={queueSince} queueWaitMs={queueWaitMs} status={status} compaction={compaction} onClose={() => setPerformanceOpen(false)} />}
-      <footer className="statusbar"><div><button onClick={() => setTerminalOpen(!terminalOpen)}><Terminal size={13} />终端</button><span className="statusbar-divider" /><span><HardDrive size={12} />{deviceName}</span><span className="statusbar-connection"><span className={`status-dot ${modelId ? 'configured' : ''}`} />{modelId ? '已配置模型' : '模型未配置'}</span></div><div><button className="performance-toggle" aria-label="推理性能与上下文" aria-expanded={performanceOpen} onClick={() => setPerformanceOpen(open => !open)} title={usage.budget ? `输入预算 ${usage.budget.toLocaleString()}；实际加载上下文 ${usage.context.toLocaleString()}` : '查看上下文预算、真实用量与最近请求性能'}><span className="context-track"><i style={{ width: `${Math.min(100, usage.input / (usage.budget || usage.context) * 100)}%` }} /></span>{usage.estimated ? '约 ' : ''}{usage.input.toLocaleString()} / {usage.budget ? `${usage.budget.toLocaleString()} 输入` : `${(usage.context / 1024).toFixed(0)}K`}<ChevronDown size={10} /></button><span className="statusbar-divider" /><span>Gemma Harness</span></div></footer>
+      <footer className="statusbar"><div><button onClick={() => setTerminalOpen(!terminalOpen)}><Terminal size={13} />终端</button><span className="statusbar-divider" /><span><HardDrive size={12} />{deviceName}</span><span className="statusbar-connection"><span className={`status-dot ${modelId ? 'configured' : ''}`} />{modelId ? '已配置模型' : '模型未配置'}</span></div><div><button className="performance-toggle" aria-label="推理性能与上下文" aria-expanded={performanceOpen} onClick={() => setPerformanceOpen(open => !open)} title={usage.budget ? `输入预算 ${usage.budget.toLocaleString()}；实际加载上下文 ${usage.context.toLocaleString()}` : '查看上下文预算、真实用量与最近请求性能'}><span className="context-track"><i style={{ width: `${Math.min(100, usage.input / (usage.budget || usage.context) * 100)}%` }} /></span>{usage.estimated ? '约 ' : ''}{usage.input.toLocaleString()} / {usage.budget ? `${usage.budget.toLocaleString()} 输入` : `${(usage.context / 1024).toFixed(0)}K`}<ChevronDown size={10} /></button><span className="statusbar-divider" />{desktop && <UpdateControl beginInstall={beginUpdateInstall} endInstall={endUpdateInstall} />}<span>Gemma Harness</span></div></footer>
     </main>
+    {updateInstalling && <div className="update-lock" role="status" aria-live="polite"><Loader2 size={18} className="spin" />正在安装更新，应用即将重启…</div>}
     {settings && <Settings initialTab={settings} config={config} onClose={() => setSettings(null)} onSave={(next, savedAppearanceOnly) => { const appearanceOnly = savedAppearanceOnly || withoutAppearance(configRef.current) === withoutAppearance(next); setConfig(next); if (appearanceOnly) { void refresh(); return; } const selected = next.connections.find(c => c.id === next.selectedConnectionId); metricBindingRef.current = metricKey(undefined, selected?.id, selected?.contextLength); resetPerformance(selected?.contextLength || 8192); setConfig(next); setCurrent(null); setActivities([]); setHistoryStart(0); chatFollowRef.current = true; setChatAtBottom(true); setFiles(null); void refresh(); }} onError={notify} />}
     {projectDialog && <ProjectDialog key={`${projectDialog.project.id}:${projectDialog.action}`} project={projectDialog.project} action={projectDialog.action} onClose={() => setProjectDialog(null)} onConfirm={manageProject} />}
     {toast && <div role="alert" className="toast"><Unplug size={16} /><span>{toast}</span><button aria-label="关闭提示" onClick={() => setToast('')}><X size={14} /></button></div>}

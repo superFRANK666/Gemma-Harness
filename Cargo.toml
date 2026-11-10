@@ -1,12 +1,12 @@
 [workspace]
-members = ["crates/harness-model", "crates/harness-executor", "crates/harness-remote", "crates/harness-core", "apps/desktop/src-tauri"]
+members = ["crates/harness-model", "crates/harness-executor", "crates/harness-remote", "crates/harness-core", "crates/harness-update-verify", "apps/desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.90"
 
 [profile.release]
 lto = "thin"

@@ -218,6 +218,17 @@ textarea{resize:none}
 .statusbar button,.statusbar span{display:flex;align-items:center;gap:5px}
 .statusbar button{font-size:calc(8px * var(--ui-font-scale));color:var(--text-secondary)}
 .statusbar .statusbar-divider{height:10px;width:1px;background:var(--surface-raised)}
+.update-anchor{position:relative;display:flex;align-items:center}
+.statusbar .update-trigger{white-space:nowrap}
+.update-panel{position:absolute;right:0;bottom:25px;width:min(340px,80vw);padding:16px;border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);box-shadow:0 12px 35px var(--shadow);color:var(--text);font-size:calc(11px * var(--ui-font-scale));z-index:30}
+.update-panel header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.update-panel header strong{font-size:calc(12px * var(--ui-font-scale))}
+.update-panel p{display:flex;align-items:center;gap:6px;line-height:1.6;margin:12px 0}
+.update-panel small{display:block;color:var(--text-secondary);font-size:calc(10px * var(--ui-font-scale));line-height:1.7}
+.update-panel .update-message{color:var(--warning);overflow-wrap:anywhere;display:block}
+.statusbar .update-panel>button{font-size:calc(10px * var(--ui-font-scale));margin-top:12px}
+.statusbar .update-panel>.primary-button{color:var(--on-accent)}
+.update-lock{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--overlay);color:var(--text);font-size:calc(14px * var(--ui-font-scale))}
 .context-track{width:37px;height:3px;background:var(--surface-raised);display:inline-block!important;border-radius:2px;overflow:hidden}
 .context-track>i{height:100%;background:var(--accent-muted);display:block}
 .preview-banner{display:flex;align-items:center;gap:7px;justify-content:center;padding:6px 12px;font-size:calc(9px * var(--ui-font-scale));background:var(--surface);color:var(--text-secondary);border-bottom:1px solid var(--line-strong)}

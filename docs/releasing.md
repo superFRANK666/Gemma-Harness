@@ -1,10 +1,21 @@
-# 发布流程
+# 发布与应用内更新
 
-项目使用 GitHub Actions 在原生运行环境构建 macOS Apple Silicon、macOS Intel、Windows x64 和 Linux x64 安装包。仓库只保存源码、锁文件和构建脚本；模型、用户会话、编译产物与测试截图不会提交。
+项目使用 GitHub Actions 在原生环境构建 macOS Apple Silicon、macOS Intel、Windows x64 和 Linux x64 安装包。仓库只保存源码、锁文件和构建脚本；模型、用户会话、签名私钥与构建产物不得提交。
 
-1. 先在目标提交运行验证工作流，并检查 `package.json`、`Cargo.toml` 的 workspace 版本及 `apps/desktop/src-tauri/tauri.conf.json` 版本一致。
-2. 为该提交推送与版本对应的标签，例如 `v0.3.0`。标签会触发四个独立打包任务。
-3. 四个任务全部成功后，发布任务等待该提交的三平台验证通过，检查两份 DMG、Windows EXE／MSI、Linux DEB／AppImage 共六个非空安装包，并生成 `SHA256SUMS`。
-4. 发布任务先创建预发布草稿，上传并核对全部资产的名称和大小，然后才公开。某个平台失败或资产缺失时不会公开不完整的 Release。失败后可在 GitHub Actions 中重新运行失败任务；已公开的 Release 不会被自动覆盖。
+## 更新机制
 
-流程默认发布为预发布版。需要正式版时，应在完成相应平台验收和签名安排后，明确调整发布标记。构建出来的 macOS 包采用 ad-hoc 签名，不是 Developer ID 公证；Windows 包没有 Authenticode 签名。自动化构建和下载校验不能替代各平台真实安装、运行及桌面权限验收。
+应用启动后及每六小时检查一次更新，底部「检查更新」也可以手动触发。用户选择下载并安装后，更新器会验证签名及其绑定的版本。若消息、图片、终端命令或文件尚未保存，或有任务正在运行，安装会等待用户处理；安装时应用重启。更新检查失败不会显示为已是最新版本。
+
+当前发布渠道包括预发布版。更新清单发布在 `update-channel` 分支的 `latest.json`，不使用会忽略预发布版的 GitHub `releases/latest`。清单分别提供 macOS ARM64／Intel、Windows NSIS／MSI 及 Linux AppImage／DEB 的签名包。更新器只接受版本高于当前版本且与签名绑定的版本，不允许回退。`v0.3.0` 没有更新器，必须先手动安装带更新功能的版本。
+
+更新签名公钥保存在 `apps/desktop/src-tauri/tauri.conf.json`；私钥及密码保存在仓库 Actions 的 `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 密钥中，并应由维护者安全备份。丢失私钥会使已安装应用无法验证后续更新；不要轮换或覆盖它而不制定迁移方案。更新包的签名验证与 macOS Developer ID 公证、Windows Authenticode 签名是不同机制。
+
+## 发布步骤
+
+1. 更新三个版本号（`package.json`、workspace `Cargo.toml`、`tauri.conf.json`）与 `docs/release-notes.md`；版本必须是递增的数字 SemVer。普通本地构建不需要私钥。
+2. 将发布提交推送到 `main`，等待该提交的三平台 Verify 工作流通过，再推送对应标签，例如 `v0.3.1`。
+3. 标签触发四个平台打包。构建任务使用 Actions 密钥生成更新包，并对 Windows、Linux 和 macOS 更新资产逐个签名，签名绑定版本号。
+4. 发布任务检查六个安装包、两份 macOS 更新归档和六份签名；生成 `latest.json` 与 `SHA256SUMS`，并用嵌入应用的公钥逐一验证签名和版本。
+5. 工作流先上传预发布草稿，检查全部资产的远端 SHA256 和大小，再公开 Release，最后原子更新 `update-channel/latest.json` 并回读。渠道不允许覆盖较新的版本；相同版本若内容不同也会拒绝。
+
+失败后可重新运行失败任务。已公开的 Release 不会被覆盖；若其资产与本次产物完全一致，重跑发布任务可以继续补发更新清单，否则会停止。macOS 安装包仍是 ad-hoc 签名、未经公证；Windows 安装包未经 Authenticode 签名。自动化构建与签名检查不能替代 Windows、Linux、Intel Mac 上的真实安装和更新验收。
