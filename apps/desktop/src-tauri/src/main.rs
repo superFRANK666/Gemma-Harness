@@ -52,7 +52,15 @@ async fn stream_tool(
 }
 #[tauri::command]
 async fn prepare_app_update(state: State<'_, Arc<Harness>>) -> Result<(), String> {
-    state.inner().shutdown().await;
+    state
+        .inner()
+        .prepare_app_update()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+#[tauri::command]
+async fn cancel_app_update(state: State<'_, Arc<Harness>>) -> Result<(), String> {
+    state.inner().cancel_app_update().await;
     Ok(())
 }
 fn main() {
@@ -74,7 +82,8 @@ fn main() {
             command,
             stream_turn,
             stream_tool,
-            prepare_app_update
+            prepare_app_update,
+            cancel_app_update
         ])
         .build(tauri::generate_context!())
         .expect("Cannot initialize Gemma Harness")

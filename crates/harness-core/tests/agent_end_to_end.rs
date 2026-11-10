@@ -249,6 +249,445 @@ fn assert_tool_pairs(messages: &[Value]) {
 }
 
 #[tokio::test]
+async fn failed_tool_diagnostic_warns_when_a_model_merely_claims_a_tool_ran() -> Result<()> {
+    let model = MockModel::start(|_, _| answer("I ran the requested function.")).await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["diagnostics"]["mock-model"]["toolCalling"]["status"] = json!("failed");
+    config["diagnostics"]["mock-model"]["templateRendering"]["status"] = json!("failed");
+    let store = Store::open(&fixture.data.join("harness.sqlite"))?;
+    store.save_setting(&config)?;
+    drop(store);
+    let reopened = Harness::open(fixture.data.clone())?;
+    reopened
+        .turn(
+            fixture.session_id.clone(),
+            "Run the requested function".into(),
+            fixture.sink(),
+        )
+        .await?;
+    let events = fixture.events.lock().unwrap().clone();
+    assert!(events.iter().any(
+        |event| event["type"] == "capability_warning" && event["capability"] == "tool_calling"
+    ));
+    assert!(events.iter().any(
+        |event| event["type"] == "capability_warning" && event["capability"] == "tool_template"
+    ));
+    assert!(!events.iter().any(|event| event["type"] == "tool_started"));
+    let stored = reopened
+        .command(json!({"action":"load_session","sessionId":fixture.session_id}))
+        .await?;
+    assert!(stored["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["payload"]["type"] == "capability_warning"));
+    reopened.shutdown().await;
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemma4_tool_mention_without_an_execution_event_is_distinguished_from_real_calls(
+) -> Result<()> {
+    for scenario in ["claimed", "actual", "no_mention"] {
+        let model = MockModel::start(move |index, _| match (scenario, index) {
+            ("claimed", _) => answer("I ran file_read and found Hello, World!"),
+            ("actual", 0) => calls(vec![function(
+                "read",
+                "file_read",
+                json!({"path":"note.txt"}),
+            )]),
+            ("actual", _) => answer("file_read returned the contents."),
+            _ => answer("READY"),
+        })
+        .await?;
+        let fixture = Fixture::new(&model, 65536).await?;
+        std::fs::write(fixture.workspace.join("note.txt"), "verified\n")?;
+        let mut config = fixture
+            .harness
+            .command(json!({"action":"snapshot"}))
+            .await?["config"]
+            .clone();
+        config["connections"][0]["modelFamily"] = json!("gemma4");
+        fixture
+            .harness
+            .command(json!({"action":"save_settings","config":config}))
+            .await?;
+        fixture.turn("Read the file if needed").await?;
+        let events = fixture.events.lock().unwrap().clone();
+        let warned = events
+            .iter()
+            .any(|e| e["type"] == "capability_warning" && e["capability"] == "tool_not_run");
+        assert_eq!(warned, scenario == "claimed", "scenario: {scenario}");
+        let started = events.iter().any(|e| e["type"] == "tool_started");
+        assert_eq!(started, scenario == "actual", "scenario: {scenario}");
+        if warned {
+            assert!(fixture.stored().await?["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["payload"]["type"] == "capability_warning"
+                    && e["payload"]["capability"] == "tool_not_run"));
+        }
+        fixture.harness.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemma4_incomplete_text_claiming_a_tool_also_reports_no_tool_event() -> Result<()> {
+    let model = MockModel::start(|_, _| sse(&[
+        json!({"choices":[{"index":0,"delta":{"content":"I ran file_read and found a result"},"finish_reason":null}]}),
+        json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
+    ], true)).await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["connections"][0]["modelFamily"] = json!("gemma4");
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    assert!(fixture.turn("Read a file").await.is_err());
+    let events = fixture.events.lock().unwrap().clone();
+    assert!(events
+        .iter()
+        .any(|e| e["type"] == "capability_warning" && e["capability"] == "tool_not_run"));
+    assert!(!events.iter().any(|e| e["type"] == "tool_started"));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleted_file_can_be_restored_from_its_own_record_without_overwriting() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "read",
+            "file_read",
+            json!({"path":"old.txt"}),
+        )]),
+        1 => calls(vec![function(
+            "delete",
+            "file_delete",
+            json!({"path":"old.txt"}),
+        )]),
+        _ => answer("Deleted."),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let path = fixture.workspace.join("old.txt");
+    std::fs::write(&path, "original\n")?;
+    fixture.turn("Delete old.txt").await?;
+    assert!(!path.exists());
+    assert!(fixture.harness.command(json!({"action":"restore_deleted_file","sessionId":fixture.session_id,"callId":"not-a-delete"})).await.is_err());
+    let result = fixture.harness.command(json!({"action":"restore_deleted_file","sessionId":fixture.session_id,"callId":"delete","path":"forged.txt"})).await?;
+    assert_eq!(result["restored"], true);
+    assert_eq!(std::fs::read_to_string(&path)?, "original\n");
+    assert!(!fixture.workspace.join("forged.txt").exists());
+    assert!(fixture.harness.command(json!({"action":"restore_deleted_file","sessionId":fixture.session_id,"callId":"delete"})).await.is_err());
+    let events = fixture.stored().await?["events"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(events
+        .iter()
+        .any(|e| e["payload"]["type"] == "manual_file_restore_completed"
+            && e["payload"]["path"] == "old.txt"));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemma4_guessed_delete_token_fails_safely_and_a_new_call_uses_the_inspected_version(
+) -> Result<()> {
+    let model = MockModel::start(|index, request| match index {
+        0 => calls(vec![function(
+            "read",
+            "file_read",
+            json!({"path":"old.txt","raw":true}),
+        )]),
+        1 => calls(vec![function(
+            "guessed",
+            "file_delete",
+            json!({"path":"old.txt","read_token":"1"}),
+        )]),
+        2 => {
+            let results = tool_results(request);
+            let feedback: Value =
+                serde_json::from_str(results.last().unwrap()["content"].as_str().unwrap()).unwrap();
+            assert_eq!(feedback["versionRecovery"], "omit_read_token");
+            let offered = request["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["function"]["name"] == "file_delete")
+                .unwrap();
+            assert!(offered["function"]["parameters"]["properties"]
+                .get("read_token")
+                .is_none());
+            assert!(offered["function"]["parameters"]["properties"]
+                .get("expected_sha256")
+                .is_some());
+            calls(vec![function(
+                "corrected",
+                "file_delete",
+                json!({"path":"old.txt"}),
+            )])
+        }
+        _ => answer("Deleted."),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["connections"][0]["modelFamily"] = json!("gemma4");
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    let path = fixture.workspace.join("old.txt");
+    std::fs::write(&path, "old content\n")?;
+    fixture.turn("Delete old.txt.").await?;
+    let requests = model.captured();
+    assert!(requests[0]["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("Never invent a token"));
+    let events = fixture.events.lock().unwrap().clone();
+    let guessed = events
+        .iter()
+        .find(|event| event["type"] == "tool_completed" && event["callId"] == "guessed")
+        .unwrap();
+    assert_eq!(guessed["result"]["isError"], true);
+    let read = events
+        .iter()
+        .find(|event| event["type"] == "tool_completed" && event["callId"] == "read")
+        .unwrap();
+    assert_eq!(guessed["result"]["versionRecovery"], "omit_read_token");
+    assert!(guessed["result"]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("no file was changed"));
+    let corrected = events
+        .iter()
+        .find(|event| event["type"] == "tool_completed" && event["callId"] == "corrected")
+        .unwrap();
+    assert_eq!(corrected["result"]["deleted"], true);
+    assert_eq!(
+        corrected["result"]["versionSource"],
+        "same_turn_file_inspection"
+    );
+    let corrected_start = events
+        .iter()
+        .find(|event| event["type"] == "tool_started" && event["callId"] == "corrected")
+        .unwrap();
+    assert_eq!(
+        corrected_start["effectiveArguments"]["read_token"],
+        read["result"]["read_token"]
+    );
+    assert!(!path.exists());
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn partial_reads_allow_exact_patches_but_not_implicit_full_overwrites() -> Result<()> {
+    for scenario in [
+        "partial_write",
+        "partial_patch",
+        "complete_write",
+        "truncated_raw_write",
+    ] {
+        let model = MockModel::start(move |index, _| match index {
+            0 => calls(vec![function(
+                "read",
+                "file_read",
+                if matches!(scenario, "truncated_raw_write" | "complete_write") {
+                    json!({"path":"notes.txt","raw":true})
+                } else {
+                    json!({"path":"notes.txt","start_line":1,"line_count":1})
+                },
+            )]),
+            1 if scenario == "partial_patch" => calls(vec![function(
+                "edit",
+                "file_apply_patch",
+                json!({"path":"notes.txt","old_text":"change_me","new_text":"changed"}),
+            )]),
+            1 => calls(vec![function(
+                "edit",
+                "file_write",
+                json!({"path":"notes.txt","content":"replacement"}),
+            )]),
+            _ => answer("Finished."),
+        })
+        .await?;
+        let fixture = Fixture::new(&model, 65536).await?;
+        let original = if scenario == "truncated_raw_write" {
+            "x".repeat(9000)
+        } else {
+            "change_me\nkeep_me\n".to_owned()
+        };
+        let path = fixture.workspace.join("notes.txt");
+        std::fs::write(&path, &original)?;
+        fixture.turn("Read and edit the file.").await?;
+        let expected = match scenario {
+            "partial_patch" => "changed\nkeep_me\n",
+            "complete_write" => "replacement",
+            _ => &original,
+        };
+        assert_eq!(std::fs::read_to_string(path)?, expected, "{scenario}");
+        let events = fixture.events.lock().unwrap().clone();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "tool_completed" && event["callId"] == "edit")
+            .unwrap();
+        assert_eq!(
+            completed["result"]["isError"] == true,
+            matches!(scenario, "partial_write" | "truncated_raw_write"),
+            "{scenario}"
+        );
+        fixture.harness.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn partial_file_chunk_never_silently_authorizes_a_whole_file_overwrite() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "discover",
+            "tool_search",
+            json!({"query":"file_read_chunk"}),
+        )]),
+        1 => calls(vec![function(
+            "page",
+            "file_read_chunk",
+            json!({"path":"large.txt","limit":32000}),
+        )]),
+        2 => calls(vec![function(
+            "write",
+            "file_write",
+            json!({"path":"large.txt","content":"replace everything"}),
+        )]),
+        _ => answer("Could not overwrite."),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let original = "x".repeat(9000);
+    std::fs::write(fixture.workspace.join("large.txt"), &original)?;
+    fixture
+        .turn("Read the file, then try to replace it.")
+        .await?;
+    assert_eq!(
+        std::fs::read_to_string(fixture.workspace.join("large.txt"))?,
+        original
+    );
+    let requests = model.captured();
+    let results = tool_results(&requests[2]);
+    let page: Value = serde_json::from_str(results.last().unwrap()["content"].as_str().unwrap())?;
+    assert_eq!(page["has_more"], true);
+    assert_eq!(
+        page["next_offset"].as_u64().unwrap(),
+        page["content"].as_str().unwrap().len() as u64
+    );
+    assert!(page["next_offset"].as_u64().unwrap() < 9000);
+    let events = fixture.events.lock().unwrap().clone();
+    assert!(events.iter().any(|e| e["type"] == "tool_completed"
+        && e["name"] == "file_write"
+        && e["result"]["isError"] == true));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_inspection_allows_safe_deletion_but_does_not_authorize_overwrite() -> Result<()> {
+    for scenario in ["delete", "stale", "write_after_stat"] {
+        let target = Arc::new(Mutex::new(None::<PathBuf>));
+        let model_target = target.clone();
+        let model = MockModel::start(move |index, _| match index {
+            0 => calls(vec![function(
+                "discover",
+                "tool_search",
+                json!({"query":"file_stat"}),
+            )]),
+            1 => calls(vec![function(
+                "inspect",
+                "file_stat",
+                json!({"path":"old.txt"}),
+            )]),
+            2 => {
+                if scenario == "stale" {
+                    std::fs::write(
+                        model_target.lock().unwrap().as_ref().unwrap(),
+                        "changed by another process\n",
+                    )
+                    .unwrap();
+                }
+                if scenario == "write_after_stat" {
+                    calls(vec![function(
+                        "write",
+                        "file_write",
+                        json!({"path":"old.txt","content":"unexpected overwrite\n"}),
+                    )])
+                } else {
+                    calls(vec![function(
+                        "delete",
+                        "file_delete",
+                        json!({"path":"old.txt"}),
+                    )])
+                }
+            }
+            _ => answer("Finished."),
+        })
+        .await?;
+        let fixture = Fixture::new(&model, 65536).await?;
+        let path = fixture.workspace.join("old.txt");
+        std::fs::write(&path, "original\n")?;
+        *target.lock().unwrap() = Some(path.clone());
+        fixture.turn("Operate on old.txt").await?;
+        let events = fixture.events.lock().unwrap().clone();
+        if scenario == "delete" {
+            assert!(!path.exists());
+            assert!(events.iter().any(|e| e["type"] == "tool_started"
+                && e["name"] == "file_delete"
+                && e["versionSource"] == "same_turn_file_inspection"
+                && e["effectiveArguments"]["read_token"].is_string()));
+            let backup = events
+                .iter()
+                .find(|e| e["type"] == "tool_completed" && e["name"] == "file_delete")
+                .and_then(|e| e["result"]["backup_artifact"].as_str())
+                .context("Missing delete backup")?;
+            assert_eq!(std::fs::read_to_string(backup)?, "original\n");
+        } else {
+            assert_eq!(
+                std::fs::read_to_string(path)?,
+                if scenario == "stale" {
+                    "changed by another process\n"
+                } else {
+                    "original\n"
+                }
+            );
+            assert!(events
+                .iter()
+                .any(|e| e["type"] == "tool_completed" && e["result"]["isError"] == true));
+        }
+        fixture.harness.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn omitted_edit_version_uses_only_same_turn_read_and_still_checks_staleness() -> Result<()> {
     for scenario in ["same_turn", "stale", "earlier_turn"] {
         let workspace_file = Arc::new(Mutex::new(None::<PathBuf>));
@@ -403,6 +842,67 @@ async fn completed_invalid_json_batch_is_corrected_without_executing_siblings() 
 }
 
 #[tokio::test]
+async fn gemma4_empty_final_after_a_write_retries_without_exposing_tools() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "create",
+            "file_write",
+            json!({"path":"once.txt","content":"created"}),
+        )]),
+        1 => sse(
+            &[json!({"choices":[{"delta":{},"finish_reason":"stop"}]})],
+            true,
+        ),
+        2 => calls(vec![function(
+            "hallucinated-repeat",
+            "file_write",
+            json!({"path":"must-not-repeat.txt","content":"forbidden"}),
+        )]),
+        _ => answer("File created."),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["connections"][0]["modelFamily"] = json!("gemma4");
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    fixture.turn("Create a file").await?;
+    assert_eq!(
+        std::fs::read_to_string(fixture.workspace.join("once.txt"))?,
+        "created"
+    );
+    let requests = model.captured();
+    assert_eq!(requests.len(), 4);
+    assert!(requests[2].get("tools").is_none());
+    assert!(requests[3].get("tools").is_none());
+    assert!(!fixture.workspace.join("must-not-repeat.txt").exists());
+    assert_eq!(
+        fixture
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "tool_started")
+            .count(),
+        1
+    );
+    assert!(fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| e["type"] == "model_retry" && e["reason"] == "empty_final_after_tool"));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn empty_final_is_incomplete_and_streamed_partial_survives_as_activity() -> Result<()> {
     let model = MockModel::start(|index, _| if index == 0 {
         sse(&[json!({"choices":[{"delta":{"reasoning_content":"synthetic"},"finish_reason":null}]}),json!({"choices":[{"delta":{},"finish_reason":"stop"}]})], true)
@@ -516,7 +1016,9 @@ async fn gemma4_reasoning_is_preserved_within_tools_and_removed_on_next_user_tur
 
 #[tokio::test]
 async fn user_images_require_vision_and_are_offloaded_from_persisted_history() -> Result<()> {
-    let model = MockModel::start(|_, request| {
+    let first_probe = Arc::new(AtomicUsize::new(0));
+    let attempts = first_probe.clone();
+    let model = MockModel::start(move |_, request| {
         if request["tools"].as_array().is_some_and(|tools|tools.iter().any(|t|t["function"]["name"]=="harness_capture_probe")) {
             return calls(vec![function("vision-probe", "harness_capture_probe", json!({}))]);
         }
@@ -526,6 +1028,7 @@ async fn user_images_require_vision_and_are_offloaded_from_persisted_history() -
             parts.iter().find_map(|p|p["image_url"]["url"].as_str())
         }));
         if let Some(url) = probe {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 { return answer("temporary vision error"); }
             use base64::Engine as _;
             let png=base64::engine::general_purpose::STANDARD.decode(url.split_once(',').unwrap().1).unwrap();
             let data=png.windows(4).position(|v|v==b"IDAT").unwrap()+4+7;
@@ -570,8 +1073,8 @@ async fn user_images_require_vision_and_are_offloaded_from_persisted_history() -
     let requests = model.captured();
     assert_eq!(
         requests.len(),
-        4,
-        "external vision is revalidated before sending the user's images"
+        5,
+        "one failed vision observation is retried before sending the user's images"
     );
     let messages = requests.last().unwrap()["messages"].as_array().unwrap();
     let user = messages.iter().rev().find(|m| m["role"] == "user").unwrap();
@@ -587,6 +1090,47 @@ async fn user_images_require_vision_and_are_offloaded_from_persisted_history() -
     assert!(stored["events"]
         .to_string()
         .contains("Saved image artifact:"));
+    reopened
+        .turn(
+            fixture.session_id.clone(),
+            "请再看刚才那张图片".into(),
+            fixture.sink(),
+        )
+        .await?;
+    let followup = model.captured().last().cloned().unwrap();
+    let restored = followup["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+        .filter(|p| p["type"] == "image_url" && p["image_url"]["url"] == png)
+        .count();
+    assert_eq!(
+        restored, 2,
+        "the previous images should be rehydrated for an explicit follow-up"
+    );
+    let current_user = followup["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")
+        .unwrap();
+    assert_eq!(
+        current_user["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part["type"] == "image_url")
+            .count(),
+        2,
+        "restored pixels must stay with the current request during compaction"
+    );
+    assert!(!reopened
+        .command(json!({"action":"load_session","sessionId":fixture.session_id}))
+        .await?["events"]
+        .to_string()
+        .contains("data:image/png;base64"));
     reopened.shutdown().await;
     fixture.harness.shutdown().await;
     Ok(())
@@ -616,8 +1160,11 @@ async fn stale_external_vision_diagnostic_cannot_send_user_pixels() -> Result<()
         )
         .await
         .is_err());
-    assert_eq!(model.captured().len(), 1);
-    assert!(!model.captured()[0].to_string().contains(png));
+    assert_eq!(model.captured().len(), 2);
+    assert!(model
+        .captured()
+        .iter()
+        .all(|request| !request.to_string().contains(png)));
     let snapshot = reopened.command(json!({"action":"snapshot"})).await?;
     assert_eq!(
         snapshot["config"]["diagnostics"]["mock-model"]["vision"]["status"],
@@ -652,6 +1199,53 @@ fn image_payload_bytes_do_not_consume_text_context_budget() -> Result<()> {
         large.abs_diff(small) < 256,
         "encoded screenshot binary was counted as text tokens: small={small}, large={large}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemma4_short_raw_read_is_verbatim_and_still_authorizes_a_same_turn_edit() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "raw-read",
+            "file_read",
+            json!({"path":"sample.txt","raw":true}),
+        )]),
+        1 => calls(vec![function(
+            "edit",
+            "file_apply_patch",
+            json!({"path":"sample.txt","old_text":"before","new_text":"after"}),
+        )]),
+        _ => answer("done"),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    std::fs::write(fixture.workspace.join("sample.txt"), "before\r\n")?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["connections"][0]["modelFamily"] = json!("gemma4");
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    fixture.turn("Read and edit").await?;
+    let requests = model.captured();
+    assert_eq!(tool_results(&requests[1])[0]["content"], "before\r\n");
+    assert_eq!(
+        std::fs::read(fixture.workspace.join("sample.txt"))?,
+        b"after\r\n"
+    );
+    assert!(fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event["type"] == "tool_started"
+            && event["name"] == "file_apply_patch"
+            && event["versionSource"] == "same_turn_file_read"));
+    fixture.harness.shutdown().await;
     Ok(())
 }
 
@@ -748,6 +1342,28 @@ async fn schema_rejection_feeds_actual_error_then_allows_one_corrected_call() ->
 }
 
 #[tokio::test]
+async fn duplicate_json_tool_arguments_are_rejected_before_any_effect() -> Result<()> {
+    let model = MockModel::start(|index, _| {
+        if index == 0 {
+            let call = json!({"index":0,"id":"duplicate","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"first.txt\",\"path\":\"second.txt\",\"content\":\"x\"}"}});
+            sse(&[json!({"choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}]}),json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]})], true)
+        } else { answer("No file was written.") }
+    }).await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    fixture.turn("Reject ambiguous arguments").await?;
+    assert!(!fixture.workspace.join("first.txt").exists());
+    assert!(!fixture.workspace.join("second.txt").exists());
+    assert!(fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event["type"] == "tool_batch_rejected"));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn invalid_schema_sibling_prevents_the_entire_batch_from_mutating_files() -> Result<()> {
     let model=MockModel::start(|index,_|if index==0 {calls(vec![
         function("valid-first","file_write",json!({"path":"must-not-exist.txt","content":"would run before invalid sibling","expected_sha256":null})),
@@ -760,6 +1376,44 @@ async fn invalid_schema_sibling_prevents_the_entire_batch_from_mutating_files() 
         "valid first call executed before later invalid schema was discovered"
     );
     assert!(!fixture.workspace.join("invalid.txt").exists());
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_action_arguments_reject_the_entire_tool_batch_before_effects() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "load-browser",
+            "tool_search",
+            json!({"query":"browser"}),
+        )]),
+        1 => calls(vec![
+            function(
+                "write",
+                "file_write",
+                json!({"path":"must-not-exist.txt","content":"no effect"}),
+            ),
+            function("bad-click", "browser_act", json!({"action":"click"})),
+        ]),
+        _ => answer("The action needs a current observation."),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["toolPermissions"]["browser"] = json!(true);
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    fixture.turn("Try an invalid action").await?;
+    assert!(!fixture.workspace.join("must-not-exist.txt").exists());
+    let requests = model.captured();
+    assert!(requests[2].to_string().contains("snapshot_id"));
     fixture.harness.shutdown().await;
     Ok(())
 }
@@ -792,6 +1446,43 @@ async fn truncated_or_token_limited_model_stream_never_dispatches_a_complete_loo
                 && event["payload"]["status"] == "failed"));
         fixture.harness.shutdown().await;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn unchanged_read_observations_prompt_replanning_without_blocking_polling() -> Result<()> {
+    let model = MockModel::start(|index, _| {
+        if index < 3 {
+            calls(vec![function(
+                &format!("repeat-{index}"),
+                "file_list",
+                json!({"path":"."}),
+            )])
+        } else {
+            answer("done")
+        }
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    fixture.turn("inspect and continue").await?;
+    let requests = model.captured();
+    assert_eq!(requests.len(), 4);
+    let result: Value = serde_json::from_str(
+        tool_results(&requests[3]).last().unwrap()["content"]
+            .as_str()
+            .unwrap(),
+    )?;
+    assert!(result["harness_progress_hint"]
+        .as_str()
+        .unwrap()
+        .contains("intentionally polling"));
+    assert!(fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| e["type"] == "loop_guard" && e["action"] == "advice_only"));
+    fixture.harness.shutdown().await;
     Ok(())
 }
 
@@ -983,6 +1674,117 @@ async fn compaction_preserves_explicit_original_constraint_even_when_summary_omi
 }
 
 #[tokio::test]
+async fn compaction_retains_later_user_corrections_without_promoting_them_to_system() -> Result<()>
+{
+    let model = MockModel::start(|_, request| {
+        if request["tools"].is_null() {
+            answer("Earlier work was inspected.")
+        } else {
+            answer("continued")
+        }
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 16384).await?;
+    let store = Store::open(&fixture.data.join("harness.sqlite"))?;
+    for (role, content) in [
+        ("user", "ORIGINAL_CONSTRAINT: never edit config".to_string()),
+        ("assistant", "old evidence ".repeat(9000)),
+        ("user", "LATER_CORRECTION: you may edit config".to_string()),
+        ("assistant", "Understood.".to_string()),
+        ("user", "continue the task".to_string()),
+        ("assistant", "Working.".to_string()),
+    ] {
+        store.append(
+            &fixture.session_id,
+            "message",
+            &json!({"role":role,"content":content}),
+        )?;
+    }
+    fixture.turn("finish").await?;
+    let requests = model.captured();
+    let continuation = requests
+        .iter()
+        .find(|r| r["tools"].is_array())
+        .context("missing continuation")?;
+    let messages = continuation["messages"].as_array().unwrap();
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(!system.contains("ORIGINAL_CONSTRAINT"));
+    assert!(!system.contains("LATER_CORRECTION"));
+    let projection = messages
+        .iter()
+        .find(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("ORIGINAL_CONSTRAINT"))
+        })
+        .context("missing preserved user history")?["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        projection.find("ORIGINAL_CONSTRAINT").unwrap()
+            < projection.find("LATER_CORRECTION").unwrap()
+    );
+    assert_tool_pairs(messages);
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn overflow_recovery_preserves_earlier_corrections_at_user_priority() -> Result<()> {
+    let model = MockModel::start(|index, _| {
+        if index == 0 {
+            sse(
+                &[json!({"error":{"message":"context length exceeded"}})],
+                false,
+            )
+        } else {
+            answer("continued")
+        }
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 65536).await?;
+    let store = Store::open(&fixture.data.join("harness.sqlite"))?;
+    for (role, content) in [
+        ("user", "ORIGINAL_OVERFLOW_CONSTRAINT".to_string()),
+        ("assistant", "older evidence ".repeat(500)),
+        ("user", "LATER_OVERFLOW_CORRECTION".to_string()),
+        ("assistant", "Understood.".to_string()),
+        ("user", "next request".to_string()),
+        ("assistant", "Working.".to_string()),
+    ] {
+        store.append(
+            &fixture.session_id,
+            "message",
+            &json!({"role":role,"content":content}),
+        )?;
+    }
+    fixture.turn("continue").await?;
+    let requests = model.captured();
+    assert_eq!(requests.len(), 2);
+    let messages = requests[1]["messages"].as_array().unwrap();
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(!system.contains("ORIGINAL_OVERFLOW_CONSTRAINT"));
+    let projection = messages
+        .iter()
+        .find(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("ORIGINAL_OVERFLOW_CONSTRAINT"))
+        })
+        .context("missing preserved overflow history")?["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        projection.find("ORIGINAL_OVERFLOW_CONSTRAINT").unwrap()
+            < projection.find("LATER_OVERFLOW_CORRECTION").unwrap()
+    );
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn one_user_turn_can_compact_completed_tool_cycles_and_continue() -> Result<()> {
     let normal_requests = Arc::new(AtomicUsize::new(0));
     let counter = normal_requests.clone();
@@ -1105,6 +1907,51 @@ async fn identical_failed_calls_stop_early_and_keep_all_error_evidence() -> Resu
 }
 
 #[tokio::test]
+async fn optional_tool_search_can_retain_needed_tools_within_the_same_budget() -> Result<()> {
+    let model = MockModel::start(|index, _| match index {
+        0 => calls(vec![function(
+            "browser",
+            "tool_search",
+            json!({"query":"browser"}),
+        )]),
+        1 => calls(vec![function(
+            "desktop",
+            "tool_search",
+            json!({"query":"desktop","keep":["browser_observe"]}),
+        )]),
+        _ => answer("done"),
+    })
+    .await?;
+    let fixture = Fixture::new(&model, 32768).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["toolPermissions"]["browser"] = json!(true);
+    config["toolPermissions"]["desktop"] = json!(true);
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    fixture
+        .turn("Need browser and desktop observations")
+        .await?;
+    let requests = model.captured();
+    let tools = requests[2]["tools"].as_array().unwrap();
+    let optional: Vec<_> = tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .filter(|n| n.starts_with("browser_") || n.starts_with("desktop_"))
+        .collect();
+    assert!(optional.contains(&"browser_observe"));
+    assert!(optional.iter().any(|n| n.starts_with("desktop_")));
+    assert!(optional.len() <= 6);
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn optional_tool_groups_replace_each_other_instead_of_accumulating_schemas() -> Result<()> {
     let model = MockModel::start(|index, _| match index {
         0 => calls(vec![function(
@@ -1217,6 +2064,47 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
         .collect();
     assert_eq!(pngs.len(), 1);
     assert!(std::fs::read(pngs[0].path())?.starts_with(b"\x89PNG\r\n\x1a\n"));
+    fixture.harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemma4_thinking_can_retry_an_unemitted_truncated_generation_once() -> Result<()> {
+    let model = MockModel::start(|index, _| {
+        if index == 0 {
+            sse(&[json!({"choices":[{"index":0,"delta":{"reasoning_content":"work in progress"},"finish_reason":null}]}),json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]})], true)
+        } else { answer("complete") }
+    }).await?;
+    let fixture = Fixture::new(&model, 16384).await?;
+    let mut config = fixture
+        .harness
+        .command(json!({"action":"snapshot"}))
+        .await?["config"]
+        .clone();
+    config["connections"][0]["modelFamily"] = json!("gemma4");
+    config["connections"][0]["backend"] = json!("llama_cpp");
+    config["connections"][0]["thinkingMode"] = json!("on");
+    fixture
+        .harness
+        .command(json!({"action":"save_settings","config":config}))
+        .await?;
+    fixture.turn("Solve the task").await?;
+    let requests = model.captured();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["max_tokens"], 2048);
+    assert_eq!(requests[1]["max_tokens"], 4096);
+    assert!(fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event["type"] == "model_retry"));
+    assert!(!fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event["type"] == "tool_started"));
     fixture.harness.shutdown().await;
     Ok(())
 }

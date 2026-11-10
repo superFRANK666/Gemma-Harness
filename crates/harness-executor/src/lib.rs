@@ -20,6 +20,9 @@ use tokio_util::sync::CancellationToken;
 const PREVIEW: usize = 32 * 1024;
 const ARTIFACT_LIMIT: usize = 16 * 1024 * 1024;
 const FILE_LIMIT: u64 = 2 * 1024 * 1024;
+const FILE_WRITE_LIMIT: u64 = 16 * 1024 * 1024;
+const SEARCH_FILE_LIMIT: u64 = 64 * 1024 * 1024;
+const SEARCH_LINE_LIMIT: u64 = 256 * 1024;
 const WORKER_MESSAGE_LIMIT: usize = 32 * 1024 * 1024;
 static DESKTOP_LEASE: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
 
@@ -54,8 +57,41 @@ pub struct Executor {
 
 #[derive(Default)]
 struct ReadVersions {
-    entries: HashMap<String, (PathBuf, String)>,
+    entries: HashMap<String, ReadVersion>,
     order: VecDeque<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileStamp {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl FileStamp {
+    fn from_path(path: &Path) -> Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ReadVersion {
+    path: PathBuf,
+    sha256: String,
+    stamp: FileStamp,
 }
 
 impl Executor {
@@ -90,9 +126,13 @@ impl Executor {
         match name {
             "file_list" => self.file_list(&args, &cancel),
             "file_read" => self.file_read(&args),
+            "file_read_chunk" => self.file_read_chunk(&args, &cancel),
             "file_search" => self.file_search(&args, &cancel),
+            "file_stat" => self.file_stat(&args, &cancel),
             "file_write" => self.file_write(&args, false),
             "file_apply_patch" | "apply_patch" => self.file_write(&args, true),
+            "file_delete" => self.file_delete(&args, &cancel),
+            "file_restore" => self.file_restore(&args, &cancel),
             "git_status" | "git_diff" | "terminal_run" => {
                 self.execute_process(name, &args, cancel, None).await
             }
@@ -344,30 +384,165 @@ impl Executor {
         Ok(json!({"entries":entries,"offset":offset,"has_more":total > offset + entries.len()}))
     }
 
-    fn file_read(&self, args: &Value) -> Result<Value> {
-        let path = self.resolve(string(args, "path")?)?;
-        let bytes = read_small(&path)?;
-        let text = std::str::from_utf8(&bytes).context("File is not UTF-8 text")?;
-        let sha256 = hash(&bytes);
+    fn remember_version(&self, path: &Path, sha256: &str) -> Result<String> {
         let read_token = uuid::Uuid::new_v4().to_string();
-        {
-            let mut versions = self
+        let mut versions = self
+            .read_versions
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?;
+        while versions.order.len() >= 1024 {
+            if let Some(old) = versions.order.pop_front() {
+                versions.entries.remove(&old);
+            }
+        }
+        versions.entries.insert(
+            read_token.clone(),
+            ReadVersion {
+                path: path.to_path_buf(),
+                sha256: sha256.to_owned(),
+                stamp: FileStamp::from_path(path)?,
+            },
+        );
+        versions.order.push_back(read_token.clone());
+        Ok(read_token)
+    }
+
+    fn regular_file_for_removal(&self, requested: &str) -> Result<PathBuf> {
+        let original = Path::new(requested);
+        let original = if original.is_absolute() {
+            original.to_path_buf()
+        } else {
+            self.workspace.join(original)
+        };
+        let metadata = std::fs::symlink_metadata(&original).context("File does not exist")?;
+        if metadata.file_type().is_symlink() {
+            bail!("file_delete and file_stat do not follow a final symbolic link");
+        }
+        let path = self.resolve(requested)?;
+        if path == self.workspace || !std::fs::metadata(&path)?.is_file() {
+            bail!("Expected a regular file inside the workspace");
+        }
+        Ok(path)
+    }
+
+    fn file_stat(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
+        let path = self.regular_file_for_removal(string(args, "path")?)?;
+        let before = FileStamp::from_path(&path)?;
+        let (sha256, bytes) = hash_file(&path, cancel)?;
+        if FileStamp::from_path(&path)? != before || bytes != before.length {
+            bail!("File changed during inspection; inspect it again");
+        }
+        let read_token = self.remember_version(&path, &sha256)?;
+        if FileStamp::from_path(&path)? != before {
+            bail!("File changed during inspection; inspect it again");
+        }
+        Ok(
+            json!({"path":path.strip_prefix(&self.workspace)?,"sha256":sha256,"read_token":read_token,"bytes":bytes,"kind":"file"}),
+        )
+    }
+
+    fn file_read_chunk(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
+        use base64::Engine as _;
+        use std::io::{Read, Seek, SeekFrom};
+        let path = self.resolve(string(args, "path")?)?;
+        if !path.is_file() {
+            bail!("Expected a regular file inside the workspace");
+        }
+        let offset = args["offset"].as_u64().unwrap_or(0);
+        let limit = args["limit"].as_u64().unwrap_or(6000).clamp(4, 32_000);
+        let encoding = args["encoding"].as_str().unwrap_or("utf8");
+        if !matches!(encoding, "utf8" | "base64") {
+            bail!("encoding must be utf8 or base64");
+        }
+        let (token, version) = if let Some(token) = args.get("read_token") {
+            let token = token
+                .as_str()
+                .context("read_token must be a string")?
+                .to_owned();
+            let version = self
                 .read_versions
                 .lock()
-                .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?;
-            while versions.order.len() >= 1024 {
-                if let Some(old) = versions.order.pop_front() {
-                    versions.entries.remove(&old);
-                }
-            }
-            versions
+                .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?
                 .entries
-                .insert(read_token.clone(), (path.clone(), sha256.clone()));
-            versions.order.push_back(read_token.clone());
+                .get(&token)
+                .cloned()
+                .context("Unknown or expired read_token; start again")?;
+            if version.path != path || FileStamp::from_path(&path)? != version.stamp {
+                bail!("File changed or read_token belongs to another file; start again");
+            }
+            (token, version)
+        } else {
+            let before = FileStamp::from_path(&path)?;
+            let (sha256, bytes) = hash_file(&path, cancel)?;
+            if FileStamp::from_path(&path)? != before || bytes != before.length {
+                bail!("File changed during inspection; start again");
+            }
+            let token = self.remember_version(&path, &sha256)?;
+            let version = self
+                .read_versions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?
+                .entries
+                .get(&token)
+                .cloned()
+                .context("Read version disappeared")?;
+            if version.stamp != before {
+                bail!("File changed during inspection; start again");
+            }
+            (token, version)
+        };
+        if offset > version.stamp.length {
+            bail!("Offset exceeds file length");
+        }
+        if cancel.is_cancelled() {
+            bail!("Operation cancelled");
+        }
+        let mut file = open_regular_file(&path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = Vec::new();
+        file.take(limit).read_to_end(&mut bytes)?;
+        let content = if encoding == "base64" {
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        } else {
+            let valid = match std::str::from_utf8(&bytes) {
+                Ok(_) => bytes.len(),
+                Err(error) if error.error_len().is_none() && offset + (bytes.len() as u64) < version.stamp.length => error.valid_up_to(),
+                Err(_) => bail!("File range is not valid UTF-8 or offset is inside a character; use base64 for binary files"),
+            };
+            if valid == 0 && !bytes.is_empty() {
+                bail!("Limit is too small for the next UTF-8 character");
+            }
+            bytes.truncate(valid);
+            std::str::from_utf8(&bytes)?.to_owned()
+        };
+        if FileStamp::from_path(&path)? != version.stamp {
+            bail!("File changed during the read; start again");
+        }
+        let next = offset + bytes.len() as u64;
+        Ok(
+            json!({"path":path.strip_prefix(&self.workspace)?,"encoding":encoding,"content":content,"offset":offset,
+                  "next_offset":next,"has_more":next < version.stamp.length,"file_bytes":version.stamp.length,
+                  "bytes":bytes.len(),"sha256":version.sha256,"read_token":token,
+                  "instruction":"Offsets are bytes. Continue with next_offset and the same read_token."}),
+        )
+    }
+
+    fn file_read(&self, args: &Value) -> Result<Value> {
+        let path = self.resolve(string(args, "path")?)?;
+        let before = FileStamp::from_path(&path)?;
+        let bytes = read_small(&path)?;
+        if FileStamp::from_path(&path)? != before || bytes.len() as u64 != before.length {
+            bail!("File changed during the read; read it again");
+        }
+        let text = std::str::from_utf8(&bytes).context("File is not UTF-8 text")?;
+        let sha256 = hash(&bytes);
+        let read_token = self.remember_version(&path, &sha256)?;
+        if FileStamp::from_path(&path)? != before {
+            bail!("File changed during the read; read it again");
         }
         if args["raw"].as_bool().unwrap_or(false) {
             return Ok(
-                json!({"path":path.strip_prefix(&self.workspace)?,"sha256":sha256,"read_token":read_token,"content":text,"has_more":false,"raw":true,"bytes":bytes.len()}),
+                json!({"path":path.strip_prefix(&self.workspace)?,"sha256":sha256,"read_token":read_token,"content":text,"content_format":"verbatim_utf8","has_more":false,"raw":true,"bytes":bytes.len(),"instruction":"The content field is the exact file text. If asked to return only the file contents, return the content value alone without JSON metadata or a code fence; preserve whitespace."}),
             );
         }
         let start = args["start_line"].as_u64().unwrap_or(1).max(1) as usize;
@@ -393,8 +568,259 @@ impl Executor {
         };
         let more_lines = start.saturating_sub(1) + count < lines.len();
         Ok(
-            json!({"path":path.strip_prefix(&self.workspace)?,"sha256":sha256,"read_token":read_token,"total_lines":lines.len(),"start_line":start,"text":truncate(&selected,PREVIEW),"text_truncated":truncated,"full_text_artifact":full_text_artifact,"has_more":truncated || more_lines,"has_more_lines":more_lines,"next_start_line":if more_lines {Some(start.saturating_add(count))} else {None}}),
+            json!({"path":path.strip_prefix(&self.workspace)?,"sha256":sha256,"read_token":read_token,"total_lines":lines.len(),"start_line":start,"text":truncate(&selected,PREVIEW),"content_format":"numbered_display_not_verbatim","instruction":"The text field has line-number prefixes and normalized line endings. For exact file contents call file_read with raw:true.","text_truncated":truncated,"full_text_artifact":full_text_artifact,"has_more":truncated || more_lines,"has_more_lines":more_lines,"next_start_line":if more_lines {Some(start.saturating_add(count))} else {None}}),
         )
+    }
+
+    fn file_delete(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
+        let path = self.regular_file_for_removal(string(args, "path")?)?;
+        let (expected, token_stamp) = if let Some(token) = args.get("read_token") {
+            if args.get("expected_sha256").is_some() {
+                bail!("Provide either read_token or expected_sha256, not both");
+            }
+            let token = token.as_str().context("read_token must be a string")?;
+            let versions = self
+                .read_versions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?;
+            let version = versions
+                .entries
+                .get(token)
+                .context("Unknown or expired read_token; inspect the file again")?;
+            if version.path != path || FileStamp::from_path(&path)? != version.stamp {
+                bail!("File changed or read_token belongs to a different file");
+            }
+            (version.sha256.clone(), Some(version.stamp.clone()))
+        } else {
+            (string(args, "expected_sha256")?.to_owned(), None)
+        };
+        if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("A valid SHA-256 or read_token is required to delete a file");
+        }
+        let backup = self
+            .artifact_dir
+            .join(format!("deleted-{}.bin", uuid::Uuid::new_v4()));
+        let manifest = backup.with_extension("json");
+        let mut backup_created = false;
+        let mut manifest_created = false;
+        let attempt = (|| -> Result<(String, u64)> {
+            use std::io::{Read, Write};
+            let mut source = open_regular_file(&path)?;
+            let source_permissions = source.metadata()?.permissions();
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut target = options.open(&backup)?;
+            backup_created = true;
+            let mut digest = Sha256::new();
+            let mut buffer = [0u8; 128 * 1024];
+            let mut bytes = 0u64;
+            loop {
+                if cancel.is_cancelled() {
+                    bail!("Operation cancelled before deletion");
+                }
+                let count = source.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                target.write_all(&buffer[..count])?;
+                digest.update(&buffer[..count]);
+                bytes = bytes.saturating_add(count as u64);
+            }
+            target.sync_all()?;
+            drop(target);
+            drop(source);
+            let actual = format!("{:x}", digest.finalize());
+            if !actual.eq_ignore_ascii_case(&expected) {
+                bail!("File changed since inspection; inspect it again before deletion");
+            }
+            let mut metadata =
+                json!({"version":1,"sha256":actual,"readonly":source_permissions.readonly()});
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                metadata["unix_mode"] = json!(source_permissions.mode());
+            }
+            let mut manifest_options = std::fs::OpenOptions::new();
+            manifest_options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                manifest_options.mode(0o600);
+            }
+            let mut metadata_file = manifest_options.open(&manifest)?;
+            manifest_created = true;
+            serde_json::to_writer(&mut metadata_file, &metadata)?;
+            metadata_file.sync_all()?;
+            if hash_file(&path, cancel)?.0 != actual {
+                bail!("File changed while deletion was being prepared; inspect it again");
+            }
+            if let Some(stamp) = &token_stamp {
+                if FileStamp::from_path(&path)? != *stamp {
+                    bail!(
+                        "File identity changed while deletion was being prepared; inspect it again"
+                    );
+                }
+            }
+            if cancel.is_cancelled() {
+                bail!("Operation cancelled before deletion");
+            }
+            std::fs::remove_file(&path).context("Could not delete the file")?;
+            Ok((actual, bytes))
+        })();
+        match attempt {
+            Ok((sha256, bytes)) => Ok(
+                json!({"path":path.strip_prefix(&self.workspace)?,"deleted":true,"sha256":sha256,"bytes":bytes,"backup_artifact":backup}),
+            ),
+            Err(error) => {
+                if backup_created {
+                    let _ = std::fs::remove_file(&backup);
+                }
+                if manifest_created {
+                    let _ = std::fs::remove_file(&manifest);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn file_restore(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
+        let requested_backup = Path::new(string(args, "backup_artifact")?);
+        let requested_backup = if requested_backup.is_absolute() {
+            requested_backup.to_path_buf()
+        } else {
+            self.artifact_dir.join(requested_backup)
+        };
+        if std::fs::symlink_metadata(&requested_backup)?
+            .file_type()
+            .is_symlink()
+        {
+            bail!("Backup artifact must not be a symbolic link");
+        }
+        let backup = requested_backup.canonicalize()?;
+        if backup.parent() != Some(self.artifact_dir.as_path())
+            || !backup.is_file()
+            || !backup
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("deleted-") && n.ends_with(".bin"))
+        {
+            bail!("Only a deleted-file backup from this artifact store can be restored");
+        }
+        let expected = string(args, "expected_sha256")?;
+        if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("The SHA-256 returned by file_delete is required");
+        }
+        let manifest = backup.with_extension("json");
+        if std::fs::symlink_metadata(&manifest)?
+            .file_type()
+            .is_symlink()
+        {
+            bail!("Backup metadata must not be a symbolic link");
+        }
+        use std::io::Read;
+        let mut metadata_bytes = Vec::new();
+        std::fs::File::open(&manifest)?
+            .take(4097)
+            .read_to_end(&mut metadata_bytes)?;
+        if metadata_bytes.len() > 4096 {
+            bail!("Backup metadata is too large");
+        }
+        let metadata: Value = serde_json::from_slice(&metadata_bytes)?;
+        if metadata["version"] != 1
+            || metadata["sha256"]
+                .as_str()
+                .is_none_or(|h| !h.eq_ignore_ascii_case(expected))
+        {
+            bail!("Backup metadata does not match its expected SHA-256");
+        }
+        let path = self.resolve(string(args, "path")?)?;
+        if path == self.workspace {
+            bail!("Cannot replace workspace root");
+        }
+        let parent = path.parent().context("Invalid file parent")?;
+        std::fs::create_dir_all(parent)?;
+        if !parent.canonicalize()?.starts_with(&self.workspace) {
+            bail!("Parent escaped workspace");
+        }
+        let temp = parent.join(format!(".harness-restore-{}.tmp", uuid::Uuid::new_v4()));
+        let mut temp_created = false;
+        let attempt = (|| -> Result<(String, u64)> {
+            use std::io::{Read, Write};
+            let mut source = open_regular_file(&backup)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut target = options.open(&temp)?;
+            temp_created = true;
+            let mut digest = Sha256::new();
+            let mut bytes = 0u64;
+            let mut buffer = [0u8; 128 * 1024];
+            loop {
+                if cancel.is_cancelled() {
+                    bail!("Operation cancelled before restore");
+                }
+                let count = source.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                target.write_all(&buffer[..count])?;
+                digest.update(&buffer[..count]);
+                bytes = bytes.saturating_add(count as u64);
+            }
+            target.sync_all()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = metadata["unix_mode"]
+                    .as_u64()
+                    .context("Missing original file permissions")?
+                    as u32;
+                target.set_permissions(std::fs::Permissions::from_mode(mode & 0o7777))?;
+            }
+            #[cfg(not(unix))]
+            {
+                let mut permissions = target.metadata()?.permissions();
+                permissions.set_readonly(
+                    metadata["readonly"]
+                        .as_bool()
+                        .context("Missing original file permissions")?,
+                );
+                target.set_permissions(permissions)?;
+            }
+            drop(target);
+            drop(source);
+            let actual = format!("{:x}", digest.finalize());
+            if !actual.eq_ignore_ascii_case(expected) {
+                bail!("Backup content does not match its expected SHA-256");
+            }
+            if cancel.is_cancelled() {
+                bail!("Operation cancelled before restore");
+            }
+            std::fs::hard_link(&temp, &path).context(
+                "Restore target already exists or cannot be created without overwriting",
+            )?;
+            Ok((actual, bytes))
+        })();
+        let cleanup_warning = if temp_created {
+            std::fs::remove_file(&temp).err().map(|e| e.to_string())
+        } else {
+            None
+        };
+        match attempt {
+            Ok((sha256, bytes)) => Ok(
+                json!({"path":path.strip_prefix(&self.workspace)?,"restored":true,"sha256":sha256,"bytes":bytes,"cleanup_warning":cleanup_warning}),
+            ),
+            Err(error) => Err(error),
+        }
     }
 
     fn file_search(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
@@ -410,6 +836,11 @@ impl Executor {
             .transpose()?;
         let mut matches = Vec::new();
         let mut scanned = 0usize;
+        let mut searched = 0usize;
+        let mut skipped = 0usize;
+        let mut skipped_details = Vec::new();
+        let mut limit_reached = false;
+        let mut scan_limit_reached = false;
         for entry in walkdir::WalkDir::new(root)
             .follow_links(false)
             .into_iter()
@@ -418,7 +849,21 @@ impl Executor {
             if cancel.is_cancelled() {
                 bail!("Operation cancelled");
             }
-            let entry = entry?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    skipped += 1;
+                    if skipped_details.len() < 20 {
+                        let path = error
+                            .path()
+                            .and_then(|p| p.strip_prefix(&self.workspace).ok());
+                        skipped_details.push(
+                            json!({"path":path,"reason":"walk_error","message":error.to_string()}),
+                        );
+                    }
+                    continue;
+                }
+            };
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -426,29 +871,91 @@ impl Executor {
             if glob.as_ref().is_some_and(|g| !g.is_match(relative)) {
                 continue;
             }
-            scanned += 1;
-            if scanned > 20_000 {
+            if scanned >= 20_000 {
+                scan_limit_reached = true;
                 break;
             }
+            scanned += 1;
             let bytes = match read_small(entry.path()) {
                 Ok(b) => b,
-                Err(_) => continue,
+                Err(error) => {
+                    if entry.metadata().is_ok_and(|m| m.len() > FILE_LIMIT) {
+                        let streamed = search_large_text(
+                            entry.path(),
+                            relative,
+                            query,
+                            limit.saturating_sub(matches.len()),
+                            cancel,
+                        );
+                        if cancel.is_cancelled() {
+                            bail!("Operation cancelled");
+                        }
+                        match streamed {
+                            Ok((found, reached, incomplete)) => {
+                                matches.extend(found);
+                                if let Some(reason) = incomplete {
+                                    skipped += 1;
+                                    if skipped_details.len() < 20 {
+                                        skipped_details
+                                            .push(json!({"path":relative,"reason":reason}));
+                                    }
+                                } else {
+                                    searched += 1;
+                                }
+                                if reached {
+                                    limit_reached = true;
+                                    break;
+                                }
+                                continue;
+                            }
+                            Err(stream_error) => {
+                                skipped += 1;
+                                if skipped_details.len() < 20 {
+                                    skipped_details.push(json!({"path":relative,"reason":"read_error","message":stream_error.to_string()}));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    skipped += 1;
+                    if skipped_details.len() < 20 {
+                        skipped_details.push(
+                            json!({"path":relative,"reason":"read_error","message":error.to_string()}),
+                        );
+                    }
+                    continue;
+                }
             };
             let Ok(text) = std::str::from_utf8(&bytes) else {
+                skipped += 1;
+                if skipped_details.len() < 20 {
+                    skipped_details.push(json!({"path":relative,"reason":"not_utf8"}));
+                }
                 continue;
             };
+            searched += 1;
             for (i, line) in text.lines().enumerate() {
                 if line.contains(query) {
                     matches.push(json!({"path":relative,"line":i+1,"text":truncate(line,500)}));
                     if matches.len() >= limit {
-                        return Ok(
-                            json!({"matches":matches,"truncated":true,"files_scanned":scanned}),
-                        );
+                        limit_reached = true;
+                        break;
                     }
                 }
             }
+            if limit_reached {
+                break;
+            }
         }
-        Ok(json!({"matches":matches,"truncated":scanned>20_000,"files_scanned":scanned}))
+        let complete = skipped == 0 && !limit_reached && !scan_limit_reached;
+        Ok(
+            json!({"matches":matches,"truncated":!complete,"complete":complete,
+            "files_scanned":scanned,"files_searched":searched,"files_skipped":skipped,
+            "skipped_details":skipped_details,"skipped_details_omitted":skipped.saturating_sub(20),
+            "match_limit_reached":limit_reached,"scan_limit_reached":scan_limit_reached,
+            "scope":"Excludes .git, node_modules, target, .venv and dist; does not follow symlinks.",
+            "instruction":if complete {"Search completed within the stated scope."} else {"Search is incomplete; do not infer that absent matches do not exist. Inspect skipped paths or narrow the search."}}),
+        )
     }
 
     fn file_write(&self, args: &Value, patch: bool) -> Result<Value> {
@@ -457,7 +964,7 @@ impl Executor {
             bail!("Cannot replace workspace root");
         }
         let before = if path.exists() {
-            Some(read_small(&path)?)
+            Some(read_bounded_file(&path, FILE_WRITE_LIMIT)?)
         } else {
             None
         };
@@ -470,14 +977,14 @@ impl Executor {
                 .read_versions
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?;
-            let (read_path, sha256) = versions
+            let version = versions
                 .entries
                 .get(token)
                 .context("Unknown or expired read_token; read the file again")?;
-            if read_path != &path {
-                bail!("read_token belongs to a different file");
+            if version.path != path || FileStamp::from_path(&path)? != version.stamp {
+                bail!("File changed or read_token belongs to a different file");
             }
-            Some(sha256.clone())
+            Some(version.sha256.clone())
         } else {
             None
         };
@@ -509,12 +1016,25 @@ impl Executor {
             if old.is_empty() || before.match_indices(old).count() != 1 {
                 bail!("old_text must match exactly once");
             }
-            before.replacen(old, replacement, 1)
+            before.replacen(old, replacement, 1).into_bytes()
         } else {
-            string(args, "content")?.to_owned()
+            let content = string(args, "content")?;
+            match args["encoding"].as_str().unwrap_or("utf8") {
+                "utf8" => content.as_bytes().to_vec(),
+                "base64" => {
+                    use base64::Engine as _;
+                    if content.len() > (FILE_WRITE_LIMIT as usize).div_ceil(3) * 4 {
+                        bail!("Encoded content exceeds the 16 MiB file limit");
+                    }
+                    base64::engine::general_purpose::STANDARD
+                        .decode(content)
+                        .context("Invalid base64 content")?
+                }
+                _ => bail!("encoding must be utf8 or base64"),
+            }
         };
-        if content.len() as u64 > FILE_LIMIT {
-            bail!("File content exceeds 2 MiB");
+        if content.len() as u64 > FILE_WRITE_LIMIT {
+            bail!("File content exceeds 16 MiB");
         }
         // Keep an exact pre-edit artifact so a GUI can offer an explicit undo.
         let backup = if let Some(bytes) = &before {
@@ -540,11 +1060,11 @@ impl Executor {
         if let Ok(meta) = path.metadata() {
             file.set_permissions(meta.permissions())?;
         }
-        file.write_all(content.as_bytes())?;
+        file.write_all(&content)?;
         file.sync_all()?;
         drop(file);
         if let Some(bytes) = &before {
-            if std::fs::read(&path)
+            if read_bounded_file(&path, FILE_WRITE_LIMIT)
                 .map(|current| hash(&current) != hash(bytes))
                 .unwrap_or(true)
             {
@@ -574,7 +1094,7 @@ impl Executor {
             None
         };
         Ok(
-            json!({"path":path.strip_prefix(&self.workspace)?,"sha256":hash(content.as_bytes()),"bytes":content.len(),"backup_artifact":backup,"cleanup_warning":cleanup_warning}),
+            json!({"path":path.strip_prefix(&self.workspace)?,"sha256":hash(&content),"bytes":content.len(),"backup_artifact":backup,"cleanup_warning":cleanup_warning}),
         )
     }
 
@@ -1004,11 +1524,109 @@ fn string<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn read_small(path: &Path) -> Result<Vec<u8>> {
-    if path.metadata()?.len() > FILE_LIMIT {
-        bail!("File exceeds 2 MiB; use a targeted tool or terminal range");
+fn open_regular_file(path: &Path) -> Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
     }
-    Ok(std::fs::read(path)?)
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        bail!("Expected a regular file");
+    }
+    Ok(file)
+}
+fn hash_file(path: &Path, cancel: &CancellationToken) -> Result<(String, u64)> {
+    use std::io::Read;
+    let mut file = open_regular_file(path)?;
+    let mut digest = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        if cancel.is_cancelled() {
+            bail!("Operation cancelled");
+        }
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+        bytes = bytes.saturating_add(count as u64);
+    }
+    Ok((format!("{:x}", digest.finalize()), bytes))
+}
+fn read_small(path: &Path) -> Result<Vec<u8>> {
+    read_bounded_file(path, FILE_LIMIT).context("Use file_read_chunk for larger files")
+}
+fn read_bounded_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let file = open_regular_file(path)?;
+    if file.metadata()?.len() > limit {
+        bail!("File exceeds the {} byte limit", limit);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("File grew beyond the {} byte limit", limit);
+    }
+    Ok(bytes)
+}
+/// Search larger UTF-8 files with bounded per-line memory. An oversized file,
+/// line or invalid byte is reported as incomplete rather than as no match.
+fn search_large_text(
+    path: &Path,
+    relative: &Path,
+    query: &str,
+    limit: usize,
+    cancel: &CancellationToken,
+) -> Result<(Vec<Value>, bool, Option<&'static str>)> {
+    use std::io::{BufRead, Read};
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > SEARCH_FILE_LIMIT {
+        return Ok((vec![], false, Some("too_large")));
+    }
+    let mut reader = std::io::BufReader::new(file);
+    let mut line_number = 0usize;
+    let mut bytes_read = 0u64;
+    let mut found = Vec::new();
+    loop {
+        if cancel.is_cancelled() {
+            bail!("Operation cancelled");
+        }
+        let mut bytes = Vec::new();
+        let count = reader
+            .by_ref()
+            .take(SEARCH_LINE_LIMIT + 1)
+            .read_until(b'\n', &mut bytes)?;
+        if count == 0 {
+            break;
+        }
+        bytes_read = bytes_read.saturating_add(count as u64);
+        if bytes_read > SEARCH_FILE_LIMIT {
+            return Ok((found, false, Some("too_large")));
+        }
+        line_number += 1;
+        if count as u64 > SEARCH_LINE_LIMIT && !bytes.ends_with(b"\n") {
+            return Ok((found, false, Some("line_too_long")));
+        }
+        let Ok(mut text) = std::str::from_utf8(&bytes) else {
+            return Ok((found, false, Some("not_utf8")));
+        };
+        if let Some(without_newline) = text.strip_suffix('\n') {
+            text = without_newline
+                .strip_suffix('\r')
+                .unwrap_or(without_newline);
+        }
+        if text.contains(query) {
+            found.push(json!({"path":relative,"line":line_number,"text":truncate(text,500)}));
+            if found.len() >= limit {
+                return Ok((found, true, None));
+            }
+        }
+    }
+    Ok((found, false, None))
 }
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -1324,25 +1942,409 @@ pub fn definitions() -> Vec<Value> {
         json!({"type":"integer","description":"Coordinate or scroll distance in pixels."});
     vec![
         tool("file_list","List workspace paths with bounded pagination; skips build and dependency directories.",json!({"path":path,"depth":{"type":"integer","minimum":1,"maximum":8,"description":"Maximum directory depth; default 3."},"offset":{"type":"integer","minimum":0,"description":"Zero-based entry offset."},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"Maximum entries; default 200."}}),&[]),
-        tool("file_read","Read a bounded line range and return a read_token and whole-file SHA-256 for edits. Line-range text has line-number prefixes; for exact file contents use raw:true. If text_truncated is true, read full_text_artifact.",json!({"path":path,"start_line":{"type":"integer","minimum":1,"description":"First line, 1-based; default 1."},"line_count":{"type":"integer","minimum":1,"maximum":1000,"description":"Number of lines; default 200."},"raw":{"type":"boolean","description":"Return the exact entire file text without line-number prefixes, preserving whitespace and newlines; maximum 2 MiB."}}),&["path"]),
-        tool("file_search","Search literal text in workspace files with bounded results.",json!({"query":{"type":"string","minLength":1,"description":"Literal text to search, not a regular expression."},"path":path,"glob":{"type":"string","description":"Optional workspace-relative file glob."},"limit":{"type":"integer","minimum":1,"maximum":500,"description":"Maximum matches; default 100."}}),&["query"]),
-        tool("file_write","Write a text file. Omitting version fields creates only a new file; existing files need a read_token or expected_sha256 from file_read. Do not supply both.",json!({"path":path,"content":{"type":"string","description":"Complete replacement text."},"read_token":{"type":"string","description":"Version token from the latest file_read for this file."},"expected_sha256":{"type":["string","null"],"description":"Alternative whole-file sha256; null or omitted only when creating a new file."}}),&["path","content"]),
+        tool("file_read","Read a bounded line range and return a read_token and whole-file SHA-256 for edits. For exact contents use raw:true. For files larger than 2 MiB or binary files, use tool_search to load file_read_chunk.",json!({"path":path,"start_line":{"type":"integer","minimum":1,"description":"First line, 1-based; default 1."},"line_count":{"type":"integer","minimum":1,"maximum":1000,"description":"Number of lines; default 200."},"raw":{"type":"boolean","description":"Return exact entire UTF-8 text, up to 2 MiB."}}),&["path"]),
+        tool("file_read_chunk","Read a UTF-8 or base64 byte range from any size file. Continue with next_offset and the returned read_token; offsets count bytes. A changed file requires starting again.",json!({"path":path,"offset":{"type":"integer","minimum":0,"description":"Starting byte offset; default 0."},"limit":{"type":"integer","minimum":4,"maximum":32000,"description":"Maximum bytes; default 6000."},"encoding":{"type":"string","enum":["utf8","base64"],"description":"Use base64 for binary content."},"read_token":{"type":"string","description":"Token from an earlier chunk of the same file."}}),&["path"]),
+        tool("file_stat","Inspect a regular file and obtain a version token, including binary or large files, without reading contents into the model. Use before deleting a file.",json!({"path":path}),&["path"]),
+        tool("file_search","Search literal text in workspace files with bounded results. Check complete and files_skipped before claiming a match is absent; very large, long-line and unreadable files may be skipped.",json!({"query":{"type":"string","minLength":1,"description":"Literal text to search, not a regular expression."},"path":path,"glob":{"type":"string","description":"Optional workspace-relative file glob."},"limit":{"type":"integer","minimum":1,"maximum":500,"description":"Maximum matches; default 100."}}),&["query"]),
+        tool("file_write","Write a file up to 16 MiB; encoding is utf8 by default or base64 for exact binary bytes. Omitting version fields creates only a new file; existing files need a read_token or expected_sha256. Do not supply both.",json!({"path":path,"content":{"type":"string","description":"Complete UTF-8 text or base64-encoded bytes."},"encoding":{"type":"string","enum":["utf8","base64"],"description":"Content encoding; default utf8."},"read_token":{"type":"string","description":"Version token from an inspection of this file."},"expected_sha256":{"type":["string","null"],"description":"Alternative whole-file sha256; null or omitted only when creating a new file."}}),&["path","content"]),
         tool("file_apply_patch","Replace one exact old_text occurrence. Read the file first; use its read_token or expected_sha256, not both. Harness can use a read token from this turn when omitted.",json!({"path":path,"old_text":{"type":"string","minLength":1,"description":"Exact existing text that occurs once."},"new_text":{"type":"string","description":"Exact replacement text."},"read_token":{"type":"string","description":"Version token from the latest file_read for this file."},"expected_sha256":{"type":"string","description":"Alternative whole-file sha256 from file_read."}}),&["path","old_text","new_text"]),
+        tool("file_delete","Delete one regular file after file_read; for large or binary files load file_stat via tool_search. Never deletes a directory. A backup is saved. Omit version fields after same-turn inspection so Harness binds the verified token; otherwise supply the actual token or SHA-256, never guess.",json!({"path":path,"read_token":{"type":"string","description":"Version token from file_read or file_stat for this file."},"expected_sha256":{"type":"string","description":"Alternative whole-file SHA-256 from file_read or file_stat."}}),&["path"]),
+        tool("file_restore","Restore a file_delete backup to a missing workspace path without overwriting; use the backup_artifact and sha256 returned by file_delete.",json!({"path":path,"backup_artifact":{"type":"string","description":"Backup artifact returned by file_delete."},"expected_sha256":{"type":"string","description":"SHA-256 returned by file_delete."}}),&["path","backup_artifact","expected_sha256"]),
         tool("git_status","Read working tree status.",json!({}),&[]),
         tool("git_diff","Read bounded unstaged workspace diff; check the output artifact and output_complete status.",json!({}),&[]),
         tool("terminal_run","Run a shell command from the workspace. This is a real OS shell, not a filesystem sandbox. Output is bounded, cancellable, and saved as artifacts.",json!({"command":{"type":"string","description":"Shell command to execute in the workspace."},"timeout_ms":{"type":"integer","minimum":100,"maximum":600000,"description":"Timeout in milliseconds; default 120000."}}),&["command"]),
         tool("browser_observe","Observe a managed Chromium page; optionally navigate to url. Returns snapshot_id and element references.",json!({"url":{"type":"string","description":"Optional HTTP(S) address to navigate to."},"tab_id":tab,"depth":{"type":"integer","minimum":1,"description":"Optional accessibility tree depth."}}),&[]),
         tool("browser_screenshot","Capture a real browser screenshot and return image plus artifact.",json!({"tab_id":tab}),&[]),
-        tool("browser_act","Act on a browser observation. Except new_tab, use the latest snapshot_id; click/fill use an element ref.",json!({"action":{"type":"string","enum":["click","fill","press","scroll","back","forward","new_tab","close_tab"],"description":"Action to perform."},"snapshot_id":snapshot,"ref":reference,"text":{"type":"string","description":"Text to fill."},"key":{"type":"string","description":"Key to press."},"x":coordinate,"y":coordinate,"url":{"type":"string","description":"Optional HTTP(S) URL for new_tab."},"tab_id":tab}),&["action"]),
+        tool("browser_act","Act on a browser observation. Except new_tab, provide snapshot_id. click needs ref or screenshot x and y; fill needs ref and text; press needs key.",json!({"action":{"type":"string","enum":["click","fill","press","scroll","back","forward","new_tab","close_tab"],"description":"Action to perform."},"snapshot_id":snapshot,"ref":reference,"text":{"type":"string","description":"Text to fill; empty string clears the field."},"key":{"type":"string","description":"Key to press."},"x":coordinate,"y":coordinate,"url":{"type":"string","description":"Optional HTTP(S) URL for new_tab."},"tab_id":tab}),&["action"]),
         tool("desktop_observe","Observe native desktop windows and accessibility elements on the selected execution device. Requires OS permissions.",json!({"app":{"type":"string","description":"Optional application name."},"window_id":{"type":"string","description":"Optional observed window ID."},"depth":{"type":"integer","minimum":1,"description":"Optional accessibility tree depth."}}),&[]),
         tool("desktop_screenshot","Capture a real native desktop screenshot. Requires OS capture permission.",json!({"window_id":{"type":"string","description":"Optional observed window ID."}}),&[]),
-        tool("desktop_act","Act on native desktop. Use the latest snapshot_id and ref for semantic click/fill; coordinates require a current screenshot.",json!({"action":{"type":"string","enum":["click","fill","key","scroll","launch"],"description":"Action to perform."},"snapshot_id":snapshot,"ref":reference,"text":{"type":"string","description":"Text to fill."},"key":{"type":"string","description":"Key or key combination."},"x":coordinate,"y":coordinate,"delta":coordinate,"app":{"type":"string","description":"Application name for launch."}}),&["action"]),
+        tool("desktop_act","Act on native desktop. launch needs app; other actions need snapshot_id. click needs ref or screenshot x and y; fill needs ref and text; key needs key.",json!({"action":{"type":"string","enum":["click","fill","key","scroll","launch"],"description":"Action to perform."},"snapshot_id":snapshot,"ref":reference,"text":{"type":"string","description":"Text to fill; empty string clears the field."},"key":{"type":"string","description":"Key or key combination."},"x":coordinate,"y":coordinate,"delta":coordinate,"app":{"type":"string","description":"Application name for launch."}}),&["action"]),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chunked_reads_preserve_unicode_binary_and_version_boundaries() {
+        use base64::Engine as _;
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let text = format!("ab你好🙂{}终", "x".repeat(FILE_LIMIT as usize));
+        std::fs::write(workspace.path().join("large.txt"), &text).unwrap();
+        let cancel = CancellationToken::new();
+        let first = executor
+            .execute(
+                "file_read_chunk",
+                json!({"path":"large.txt","offset":0,"limit":7}),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first["content"], "ab你");
+        assert_eq!(first["next_offset"], 5);
+        assert_eq!(first["has_more"], true);
+        let next = executor.execute("file_read_chunk", json!({"path":"large.txt","offset":first["next_offset"],"limit":7,"read_token":first["read_token"]}), cancel.clone()).await.unwrap();
+        assert_eq!(next["content"], "好🙂");
+        assert_eq!(next["next_offset"], 12);
+        assert!(executor
+            .execute(
+                "file_read_chunk",
+                json!({"path":"large.txt","offset":3,"limit":7,"read_token":first["read_token"]}),
+                cancel.clone()
+            )
+            .await
+            .is_err());
+        let binary = [0, 255, 5, 10, 128, 3, 77];
+        std::fs::write(workspace.path().join("binary.bin"), binary).unwrap();
+        let part = executor
+            .execute(
+                "file_read_chunk",
+                json!({"path":"binary.bin","encoding":"base64","limit":4}),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        let tail = executor.execute("file_read_chunk", json!({"path":"binary.bin","encoding":"base64","offset":part["next_offset"],"limit":4,"read_token":part["read_token"]}), cancel.clone()).await.unwrap();
+        let mut assembled = base64::engine::general_purpose::STANDARD
+            .decode(part["content"].as_str().unwrap())
+            .unwrap();
+        assembled.extend(
+            base64::engine::general_purpose::STANDARD
+                .decode(tail["content"].as_str().unwrap())
+                .unwrap(),
+        );
+        assert_eq!(assembled, binary);
+        assert_eq!(tail["has_more"], false);
+        std::fs::write(workspace.path().join("binary.bin"), b"changed").unwrap();
+        assert!(executor
+            .execute(
+                "file_read_chunk",
+                json!({"path":"binary.bin","read_token":part["read_token"]}),
+                cancel
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn base64_file_writes_preserve_bytes_and_existing_files_need_versions() {
+        use base64::Engine as _;
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let cancel = CancellationToken::new();
+        let bytes = [0, 255, 1, 2, 128];
+        let content = base64::engine::general_purpose::STANDARD.encode(bytes);
+        executor
+            .execute(
+                "file_write",
+                json!({"path":"new.bin","encoding":"base64","content":content}),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(workspace.path().join("new.bin")).unwrap(),
+            bytes
+        );
+        assert!(executor
+            .execute(
+                "file_write",
+                json!({"path":"new.bin","encoding":"base64","content":"AAAA"}),
+                cancel.clone()
+            )
+            .await
+            .is_err());
+        assert!(executor
+            .execute(
+                "file_write",
+                json!({"path":"bad.bin","encoding":"base64","content":"!!"}),
+                cancel.clone()
+            )
+            .await
+            .is_err());
+        let inspected = executor
+            .execute("file_stat", json!({"path":"new.bin"}), cancel.clone())
+            .await
+            .unwrap();
+        executor.execute("file_write", json!({"path":"new.bin","encoding":"base64","content":"AAAA","read_token":inspected["read_token"]}), cancel).await.unwrap();
+        assert_eq!(
+            std::fs::read(workspace.path().join("new.bin")).unwrap(),
+            [0, 0, 0]
+        );
+    }
+
+    #[tokio::test]
+    async fn large_text_can_be_read_in_chunks_and_edited_without_losing_other_bytes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let original = format!(
+            "{}\nsetting=before\n",
+            "x".repeat(FILE_LIMIT as usize + 100)
+        );
+        let path = workspace.path().join("large.txt");
+        std::fs::write(&path, &original).unwrap();
+        let cancel = CancellationToken::new();
+        let offset = original.len() - "setting=before\n".len();
+        let page = executor
+            .execute(
+                "file_read_chunk",
+                json!({"path":"large.txt","offset":offset,"limit":100}),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page["content"], "setting=before\n");
+        executor.execute("file_apply_patch", json!({"path":"large.txt","old_text":"setting=before","new_text":"setting=after","read_token":page["read_token"]}), cancel).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            original.replacen("setting=before", "setting=after", 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn file_deletion_backs_up_and_restores_large_binary_without_overwriting() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let path = workspace.path().join("binary.dat");
+        let mut original = vec![0xff; FILE_LIMIT as usize + 257];
+        original[37] = 0;
+        std::fs::write(&path, &original).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
+        }
+        let cancel = CancellationToken::new();
+        let inspection = executor
+            .execute("file_stat", json!({"path":"binary.dat"}), cancel.clone())
+            .await
+            .unwrap();
+        assert_eq!(inspection["bytes"], original.len());
+        assert!(executor
+            .execute("file_read", json!({"path":"binary.dat"}), cancel.clone())
+            .await
+            .is_err());
+        let deletion = executor
+            .execute(
+                "file_delete",
+                json!({"path":"binary.dat","read_token":inspection["read_token"]}),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deletion["deleted"], true);
+        assert!(!path.exists());
+        let backup = deletion["backup_artifact"].as_str().unwrap();
+        assert_eq!(std::fs::read(backup).unwrap(), original);
+        let restore_args = json!({"path":"binary.dat","backup_artifact":backup,"expected_sha256":deletion["sha256"]});
+        let mut incorrect = restore_args.clone();
+        incorrect["expected_sha256"] = json!("0".repeat(64));
+        assert!(executor
+            .execute("file_restore", incorrect, cancel.clone())
+            .await
+            .is_err());
+        assert!(!path.exists());
+        std::fs::write(backup, b"tampered backup").unwrap();
+        assert!(executor
+            .execute("file_restore", restore_args.clone(), cancel.clone())
+            .await
+            .is_err());
+        assert!(!path.exists());
+        std::fs::write(backup, &original).unwrap();
+        let restored = executor
+            .execute("file_restore", restore_args.clone(), cancel.clone())
+            .await
+            .unwrap();
+        assert_eq!(restored["restored"], true);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o750
+            );
+        }
+        std::fs::write(&path, b"newer file").unwrap();
+        assert!(executor
+            .execute("file_restore", restore_args, cancel)
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"newer file");
+    }
+
+    #[tokio::test]
+    async fn file_deletion_rejects_stale_versions_directories_and_untrusted_backups() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let path = workspace.path().join("note.txt");
+        std::fs::write(&path, "before").unwrap();
+        std::fs::write(outside.path().join("outside.txt"), "outside").unwrap();
+        let cancel = CancellationToken::new();
+        let inspected = executor
+            .execute("file_stat", json!({"path":"note.txt"}), cancel.clone())
+            .await
+            .unwrap();
+        std::fs::write(&path, "changed").unwrap();
+        assert!(executor
+            .execute(
+                "file_delete",
+                json!({"path":"note.txt","read_token":inspected["read_token"]}),
+                cancel.clone()
+            )
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "changed");
+        assert_eq!(std::fs::read_dir(artifacts.path()).unwrap().count(), 0);
+        #[cfg(unix)]
+        {
+            let version = executor
+                .execute("file_stat", json!({"path":"note.txt"}), cancel.clone())
+                .await
+                .unwrap();
+            std::fs::rename(&path, workspace.path().join("original-inode.txt")).unwrap();
+            std::fs::write(&path, "changed").unwrap();
+            assert!(executor
+                .execute(
+                    "file_delete",
+                    json!({"path":"note.txt","read_token":version["read_token"]}),
+                    cancel.clone()
+                )
+                .await
+                .is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "changed");
+        }
+        assert!(executor
+            .execute("file_delete", json!({"path":"note.txt"}), cancel.clone())
+            .await
+            .is_err());
+        assert!(executor
+            .execute("file_stat", json!({"path":"."}), cancel.clone())
+            .await
+            .is_err());
+        assert!(executor
+            .execute(
+                "file_stat",
+                json!({"path":outside.path().join("outside.txt")}),
+                cancel.clone()
+            )
+            .await
+            .is_err());
+        assert!(executor.execute("file_restore", json!({"path":"other.txt","backup_artifact":outside.path().join("outside.txt"),"expected_sha256":"0".repeat(64)}), cancel.clone()).await.is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&path, workspace.path().join("link.txt")).unwrap();
+            assert!(executor
+                .execute("file_stat", json!({"path":"link.txt"}), cancel.clone())
+                .await
+                .is_err());
+            assert!(executor
+                .execute(
+                    "file_delete",
+                    json!({"path":"link.txt","expected_sha256":hash(b"changed")}),
+                    cancel.clone()
+                )
+                .await
+                .is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "changed");
+        }
+        cancel.cancel();
+        assert!(executor
+            .execute(
+                "file_delete",
+                json!({"path":"note.txt","expected_sha256":hash(b"changed")}),
+                cancel
+            )
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "changed");
+    }
+
+    #[tokio::test]
+    async fn search_reports_skipped_files_and_match_limits_as_incomplete() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let mut large = vec![b'x'; FILE_LIMIT as usize + 1];
+        large.extend_from_slice(b"\nneedle\n");
+        std::fs::write(workspace.path().join("large.txt"), large).unwrap();
+        std::fs::write(workspace.path().join("invalid.txt"), [0xff, 0xfe]).unwrap();
+        let result = executor
+            .execute(
+                "file_search",
+                json!({"query":"needle"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["matches"], json!([]));
+        assert_eq!(result["complete"], false);
+        assert_eq!(result["truncated"], true);
+        assert_eq!(result["files_scanned"], 2);
+        assert_eq!(result["files_searched"], 0);
+        assert_eq!(result["files_skipped"], 2);
+        let details = result["skipped_details"].as_array().unwrap();
+        assert!(details.iter().any(|item| item["reason"] == "line_too_long"));
+        assert!(details.iter().any(|item| item["reason"] == "not_utf8"));
+
+        let streamed_text = format!("{}needle 中文\n", "line\n".repeat(420_000));
+        std::fs::write(workspace.path().join("streamed.txt"), streamed_text).unwrap();
+        let streamed = executor
+            .execute(
+                "file_search",
+                json!({"query":"needle 中文","glob":"streamed.txt"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(streamed["complete"], true);
+        assert_eq!(streamed["files_searched"], 1);
+        assert_eq!(streamed["matches"][0]["line"], 420001);
+        std::fs::File::create(workspace.path().join("oversized.txt"))
+            .unwrap()
+            .set_len(SEARCH_FILE_LIMIT + 1)
+            .unwrap();
+        let oversized = executor
+            .execute(
+                "file_search",
+                json!({"query":"needle","glob":"oversized.txt"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oversized["complete"], false);
+        assert_eq!(oversized["skipped_details"][0]["reason"], "too_large");
+
+        std::fs::write(workspace.path().join("small.txt"), "needle\nneedle\n").unwrap();
+        let limited = executor
+            .execute(
+                "file_search",
+                json!({"query":"needle","glob":"small.txt","limit":1}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(limited["match_limit_reached"], true);
+        assert_eq!(limited["complete"], false);
+        let complete = executor
+            .execute(
+                "file_search",
+                json!({"query":"absent","glob":"small.txt"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(complete["complete"], true);
+        assert_eq!(complete["files_searched"], 1);
+    }
 
     #[tokio::test]
     async fn worker_frames_are_bounded_before_newline_and_partial_eof_is_rejected() {

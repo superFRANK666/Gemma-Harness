@@ -539,10 +539,10 @@ impl Normalizer {
                     message: "The tool call has no function name.".into(),
                 }]);
             }
-            let args: Value = match serde_json::from_str(&partial.arguments) {
+            let args: Value = match crate::parse_tool_arguments(&partial.arguments) {
                 Ok(args) => args,
                 Err(error) => return Ok(vec![ProviderEvent::ToolBatchRejected {
-                    message: format!("Tool {} arguments are invalid JSON at line {}, column {}. Return one complete JSON object.", partial.name.chars().take(200).collect::<String>(), error.line(), error.column()),
+                    message: format!("Tool {} arguments are invalid JSON or contain ambiguous keys at line {}, column {}: {}. Return one complete object without duplicate keys.", partial.name.chars().take(200).collect::<String>(), error.line(), error.column(), error.to_string().chars().take(300).collect::<String>()),
                 }]),
             };
             if !args.is_object() {

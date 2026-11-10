@@ -71,6 +71,32 @@ fn register_project_on(db: &Connection, workspace: &str, device_id: &str) -> Res
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let db = Connection::open(path)?;
+        db.create_scalar_function(
+            "harness_unicode_instr",
+            2,
+            rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| {
+                let source = ctx.get::<String>(0)?;
+                let needle = ctx.get::<String>(1)?;
+                let folded = source.to_lowercase();
+                let Some(offset) = folded.find(&needle) else {
+                    return Ok(0i64);
+                };
+                // SQLite substr uses character offsets, while Rust's find uses byte
+                // offsets. Case conversion may expand one source character.
+                let mut folded_bytes = 0usize;
+                for (index, ch) in source.chars().enumerate() {
+                    if folded_bytes >= offset {
+                        return Ok(index as i64 + 1);
+                    }
+                    folded_bytes += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+                    if folded_bytes > offset {
+                        return Ok(index as i64 + 1);
+                    }
+                }
+                Ok(source.chars().count() as i64 + 1)
+            },
+        )?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
           CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,workspace TEXT NOT NULL,device_id TEXT NOT NULL,connection_id TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
@@ -269,6 +295,30 @@ impl Store {
             _ => String::new(),
         }))
     }
+    /// Return original user messages, not synthetic summaries. Compaction must
+    /// fail explicitly rather than silently discard an oversized constraint set.
+    pub fn user_text_history(&self, id: &str) -> Result<Vec<String>> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("SELECT payload FROM events WHERE session_id=?1 AND kind='message' AND json_extract(payload,'$.role')='user' ORDER BY seq LIMIT 1001")?;
+        let mut rows = stmt.query([id])?;
+        let mut messages = Vec::new();
+        let mut total_bytes = 0usize;
+        while let Some(row) = rows.next()? {
+            if messages.len() >= 1000 {
+                bail!("用户消息数量超过压缩保护上限；请新建会话，原始记录已保留")
+            }
+            let payload: String = row.get(0)?;
+            total_bytes = total_bytes.saturating_add(payload.len());
+            if total_bytes > 4 * 1024 * 1024 {
+                bail!("用户消息超过压缩保护上限；请扩大上下文或新建会话，原始记录已保留")
+            }
+            let message: ChatMessage = serde_json::from_str(&payload)?;
+            if let Some(text) = crate::context::user_message_text(&message) {
+                messages.push(text);
+            }
+        }
+        Ok(messages)
+    }
     /// Search on disk; only bounded snippets cross the SQLite/Rust boundary.
     /// No unbounded event deserialization or SQL wildcard interpretation.
     pub fn search_events(&self, id: &str, query: &str) -> Result<Vec<Value>> {
@@ -280,7 +330,7 @@ impl Store {
             bail!("搜索内容不能超过 200 个字符")
         }
         let db = self.db.lock().unwrap();
-        let mut stmt = db.prepare("SELECT seq,kind,substr(payload,max(1,instr(lower(payload),?2)-300),1600),length(payload) FROM events WHERE session_id=?1 AND kind IN ('message','activity') AND instr(lower(payload),?2)>0 ORDER BY seq DESC LIMIT 8")?;
+        let mut stmt = db.prepare("SELECT seq,kind,substr(payload,max(1,harness_unicode_instr(payload,?2)-300),1600),length(payload) FROM events WHERE session_id=?1 AND kind IN ('message','activity') AND harness_unicode_instr(payload,?2)>0 ORDER BY seq DESC LIMIT 8")?;
         let rows = stmt.query_map(params![id,query], |r| Ok(serde_json::json!({"seq":r.get::<_,i64>(0)?,"kind":r.get::<_,String>(1)?,"text":r.get::<_,String>(2)?,"truncated":r.get::<_,usize>(3)?>1600})))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -630,7 +680,7 @@ mod tests {
             store.original_goal("s").unwrap().as_deref(),
             Some("original")
         );
-        store.append("s","activity",&serde_json::json!({"text":format!("{}TAIL_ERROR:中文证据", "prefix".repeat(4000))})).unwrap();
+        store.append("s","activity",&serde_json::json!({"text":format!("{}TAIL_ERROR:中文证据 CAFÉ İSTANBUL", "prefix".repeat(4000))})).unwrap();
         let matches = store.search_events("s", "tail_error").unwrap();
         assert_eq!(matches.len(), 1);
         assert!(matches[0]["text"]
@@ -638,6 +688,16 @@ mod tests {
             .unwrap()
             .contains("TAIL_ERROR:中文证据"));
         assert!(matches[0]["text"].as_str().unwrap().chars().count() <= 1600);
+        assert!(store.search_events("s", "café").unwrap()[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("CAFÉ"));
+        assert!(
+            store.search_events("s", "i\u{307}stanbul").unwrap()[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("İSTANBUL")
+        );
         assert!(store.search_events("s", "").is_err());
         drop(store);
         assert_eq!(

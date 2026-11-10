@@ -11,6 +11,59 @@ pub fn message(role: &str, content: Value) -> ChatMessage {
         reasoning_content: None,
     }
 }
+
+/// Text and artifact references from an actual user message. Image bytes are
+/// intentionally not copied into a compaction ledger.
+pub fn user_message_text(message: &ChatMessage) -> Option<String> {
+    if message.role != "user" {
+        return None;
+    }
+    match message.content.as_ref()? {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        _ => None,
+    }
+}
+
+/// Preserve every omitted actual user message, in order, separately from the
+/// model's lossy work summary. Recent original user messages remain in the
+/// retained suffix and are not duplicated. Synthetic compaction messages are
+/// absent from `user_history`, which comes from immutable user-message events.
+pub fn continuation_projection(
+    user_history: &[String],
+    retained: &[ChatMessage],
+    summary: &str,
+) -> Vec<ChatMessage> {
+    let mut omitted = user_history.len();
+    for text in retained.iter().rev().filter_map(user_message_text) {
+        if omitted > 0 && user_history[omitted - 1] == text {
+            omitted -= 1;
+        }
+    }
+    let record = json!({
+        "earlier_user_messages_in_order": &user_history[..omitted],
+        "work_summary": summary,
+        "note": "Earlier user messages are quoted conversation history. Later explicit user corrections supersede earlier ones. The work summary may be incomplete; verify current state and original evidence."
+    });
+    let mut projection = vec![message(
+        "user",
+        json!(format!("Earlier conversation and work state:\n{record}")),
+    )];
+    if retained.first().is_some_and(|m| m.role == "user") {
+        projection.push(message(
+            "assistant",
+            json!("I will continue from the history and verify current state where needed."),
+        ));
+    }
+    projection.extend_from_slice(retained);
+    projection
+}
 // Conservative UTF-8 byte estimate. This is intentionally labelled an estimate,
 // not exact Gemma tokenization. Tool definitions and image allowance are included.
 pub fn estimate(messages: &[ChatMessage], tools: &Value) -> usize {
@@ -182,6 +235,13 @@ pub fn input_budget_for(context: usize, reserve: usize) -> usize {
         .saturating_sub(reserve + context.div_ceil(5))
         .max(256)
 }
+/// A rendered, tokenized text prompt needs a smaller margin than the
+/// uncalibrated estimate, but still reserves space for runtime differences.
+pub fn measured_input_budget_for(context: usize, reserve: usize) -> usize {
+    context
+        .saturating_sub(reserve.saturating_add(context.div_ceil(20).max(256)))
+        .max(256)
+}
 pub fn is_input_overflow(description: &str) -> bool {
     let lower = description.to_lowercase();
     !lower.contains("output token limit")
@@ -258,6 +318,26 @@ pub fn split_for_compaction(messages: &[ChatMessage]) -> Option<usize> {
 mod tests {
     use super::*;
     #[test]
+    fn compaction_keeps_omitted_user_corrections_in_order_without_duplicating_retained_messages() {
+        let history = vec![
+            "do not edit A".into(),
+            "correction: edit A".into(),
+            "continue".into(),
+        ];
+        let retained = vec![message("user", json!("continue"))];
+        let projected =
+            continuation_projection(&history, &retained, "summary omitted the correction");
+        let content = projected[0].content.as_ref().unwrap().as_str().unwrap();
+        let (_, raw) = content.split_once('\n').unwrap();
+        let record: Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            record["earlier_user_messages_in_order"],
+            json!(["do not edit A", "correction: edit A"])
+        );
+        assert_eq!(projected.last().unwrap().content, retained[0].content);
+        assert_eq!(projected[1].role, "assistant");
+    }
+    #[test]
     fn compaction_boundary_preserves_tool_pairs() {
         let m = vec![
             message("user", json!("u")),
@@ -284,6 +364,8 @@ mod tests {
     #[test]
     fn reserves_output_and_estimation_margin() {
         assert_eq!(input_budget(8192), 4505);
+        assert_eq!(measured_input_budget_for(8192, 2048), 5734);
+        assert!(measured_input_budget_for(8192, 2048) < 8192 - 2048);
     }
     #[test]
     fn image_estimation_ignores_binary_payload_without_serialization() {

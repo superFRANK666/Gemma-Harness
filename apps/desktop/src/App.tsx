@@ -10,7 +10,7 @@ import { applyAppearance } from './appearance';
 import ActivityCard from './components/ActivityCard';
 import PerformancePanel, { applyUsage, initialUsage, numberValue, QueueElapsed, readMetrics } from './components/PerformancePanel';
 import type { CompactionInfo, ModelMetrics } from './components/PerformancePanel';
-import UpdateControl from './components/UpdateControl';
+import UpdateControl, { useAppUpdates } from './components/UpdateControl';
 
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || '未选择项目';
 function Mark({ small = false }: { small?: boolean }) { return <span className={`brand-mark ${small ? 'small' : ''}`}><i /><i /><i /></span>; }
@@ -24,6 +24,9 @@ const HISTORY_WINDOW = 80;
 const metricKey = (session: string | undefined, connection: string | undefined, context: number | undefined) => `${session || 'new'}|${connection || ''}|${context || 8192}`;
 const withoutAppearance = (config: Config) => { const copy = { ...config }; delete copy.appearance; return JSON.stringify(copy); };
 const savedTokens = (event: Json) => numberValue(event.tokensSaved) ?? numberValue(event.savedTokens) ?? (numberValue(event.previousEstimatedTokens) !== undefined && numberValue(event.estimatedTokens) !== undefined ? Math.max(0, Number(event.previousEstimatedTokens) - Number(event.estimatedTokens)) : undefined);
+const modelRetryText = (event: Json) => event.reason === 'empty_final_after_tool'
+  ? '工具已执行，正在重新生成结果说明；本次重试不会再次执行工具。'
+  : `本次生成达到输出上限，已在未执行新工具的前提下增加预算重试（${String(event.previousOutputTokens)} → ${String(event.outputTokens)} token）。`;
 const liveTruncationNotice = '\n[Live output preview truncated; check artifacts and output completeness.]\n';
 function terminalResultNotices(result: Json, truncated: boolean): string[] {
   const notices: string[] = [];
@@ -52,6 +55,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [projectBusy, setProjectBusy] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
   const [projectDialog, setProjectDialog] = useState<{ project: Project; action: 'rename' | 'remove' } | null>(null);
   const [current, setCurrent] = useState<Session | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -98,6 +102,7 @@ export default function App() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const terminalOutputRef = useRef<HTMLPreElement>(null);
   const terminalFollowRef = useRef(true);
+  const unverifiedToolRef = useRef(false);
   const terminalScrollTopRef = useRef(0);
   const inspectorBindingRef = useRef(0);
   const metricBindingRef = useRef('');
@@ -108,7 +113,9 @@ export default function App() {
   const pendingEventsRef = useRef<Json[]>([]);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bindingBusyRef = useRef(false);
-  bindingBusyRef.current = running || terminalBusy || projectBusy || updateInstalling;
+  const settingsDirtyRef = useRef(true);
+  const recordSettingsDirty = useCallback((dirty: boolean) => { settingsDirtyRef.current = dirty; }, []);
+  bindingBusyRef.current = running || terminalBusy || projectBusy || restoreBusy || updateInstalling;
   const configRef = useRef(config); configRef.current = config;
   const connection = config.connections.find(c => c.id === (current?.connectionId || config.selectedConnectionId));
   const modelId = connection?.model?.trim() || '';
@@ -243,6 +250,16 @@ export default function App() {
           list.push({ id: crypto.randomUUID(), role: 'assistant', text: `${String(p.text || '')}\n\n[生成未完成]` });
         } else if (event.kind === 'activity' && p.type === 'tool_batch_rejected') {
           list.push({ id: crypto.randomUUID(), role: 'status', text: `工具调用未执行：${String(p.message || '')}` });
+        } else if (event.kind === 'activity' && p.type === 'model_retry') {
+          list.push({ id: crypto.randomUUID(), role: 'status', text: modelRetryText(p) });
+        } else if (event.kind === 'activity' && p.type === 'capability_warning') {
+          list.push({ id: crypto.randomUUID(), role: 'status', text: String(p.message || '') });
+        } else if (event.kind === 'activity' && p.type === 'manual_file_restore_started') {
+          list.push({ id: crypto.randomUUID(), role: 'status', text: `开始恢复 ${String(p.path || '')}；请以完成记录和实际文件为准。` });
+        } else if (event.kind === 'activity' && p.type === 'manual_file_restore_completed') {
+          list.push({ id: crypto.randomUUID(), role: 'status', text: `已恢复 ${String(p.path || '')}` });
+        } else if (event.kind === 'activity' && p.type === 'manual_file_restore_failed') {
+          list.push({ id: crypto.randomUUID(), role: 'status', text: `恢复未完成：${String(p.message || '')}` });
         } else if (event.kind === 'activity' && p.type === 'tool_started') {
           list.push({ id: String(p.callId), role: 'tool', name: String(p.name), text: '', args: String(p.arguments), running: true, deviceId: String(p.deviceId) });
         } else if (event.kind === 'activity' && p.type === 'tool_completed') {
@@ -262,6 +279,15 @@ export default function App() {
   }
   const checkOperation = useCallback((itemId: string, operationId: string) => {
     void api('remote_operation_status', { sessionId: current?.id, operationId }).then(result => setActivities(old => old.map(item => item.id === itemId ? { ...item, result: { ...result, indeterminate: result.state === 'indeterminate' || result.state === 'dispatching' || result.state === 'accepted' } } : item))).catch(notify);
+  }, [current?.id, notify]);
+  const restoreDeleted = useCallback((callId: string) => {
+    if (!current?.id || bindingBusyRef.current) return;
+    bindingBusyRef.current = true; setRestoreBusy(true);
+    void api('restore_deleted_file', { sessionId: current.id, callId }).then(result => {
+      if (result.restored !== true) throw new Error('没有收到恢复成功的结果，请检查文件状态');
+      setFiles(null); setActivities(old => [...old, { id: crypto.randomUUID(), role: 'status', text: `已恢复 ${String(result.path || '')}` }]);
+      if (result.historyWarning) notify(result.historyWarning);
+    }).catch(notify).finally(() => { bindingBusyRef.current = false; setRestoreBusy(false); });
   }, [current?.id, notify]);
   function applyEvent(event: Json) {
     const type = String(event.type);
@@ -292,10 +318,12 @@ export default function App() {
     else if (type === 'model_metrics') { const measured = readMetrics(event); setMetrics(measured); setQueueWaitMs(old => measured.queueWaitMs ?? old); }
     else if (type === 'compaction_started') setStatus('正在压缩上下文');
     else if (type === 'tool_batch_rejected') { setStatus('正在纠正工具参数'); setActivities(old => [...old, { id: crypto.randomUUID(), role: 'status', text: `工具调用未执行：${String(event.message || '')}` }]); }
+    else if (type === 'model_retry') { const empty = event.reason === 'empty_final_after_tool'; setStatus(empty ? '正在整理工具结果' : '正在增加思考预算并重试'); setActivities(old => [...old.map(item => item.role === 'assistant' && item.running ? { ...item, running: false } : item), { id: crypto.randomUUID(), role: 'status', text: modelRetryText(event) }]); }
+    else if (type === 'capability_warning') { if (event.capability === 'tool_not_run') unverifiedToolRef.current = true; setActivities(old => [...old, { id: crypto.randomUUID(), role: 'status', text: String(event.message || '') }]); }
     else if (type === 'compaction_completed') { setStatus('上下文已压缩'); setCompaction(old => ({ count: old.count + 1, method: String(event.method || event.reason || ''), savedTokens: savedTokens(event) })); setActivities(old => [...old, { id: crypto.randomUUID(), role: 'status', text: `已整理上下文${savedTokens(event) !== undefined ? ` · 节省约 ${savedTokens(event)!.toLocaleString()} token` : ''} · 完整历史保留在本地` }]); }
     else if (type === 'error') { notify(event.message); setActivities(old => [...old, { id: crypto.randomUUID(), role: 'status', text: String(event.message) }]); }
     else if (type === 'status') setStatus(String(event.text));
-    else if (type === 'turn_completed') { setRunning(false); setQueueSince(null); setStatus(event.status === 'completed' ? '已完成' : event.status === 'interrupted' ? '已停止' : '执行失败'); }
+    else if (type === 'turn_completed') { setRunning(false); setQueueSince(null); setStatus(event.status === 'completed' ? (unverifiedToolRef.current ? '需要核对' : '回复已结束') : event.status === 'interrupted' ? '已停止' : '执行失败'); }
   }
   function flushStreamEvents() {
     if (pendingTimerRef.current !== null) clearTimeout(pendingTimerRef.current);
@@ -336,7 +364,7 @@ export default function App() {
     if (!workspace) { notify('请先选择项目目录'); return; }
     if (!connection || !modelId) { setSettings('models'); notify('请先选择推理服务中的模型'); return; }
     bindingBusyRef.current = true;
-    const text = input; const images = attachments; resetPerformance(); chatFollowRef.current = true; chatResetFollowRef.current = true; setChatAtBottom(true); historyAnchorRef.current = null; setHistoryStart(Math.max(0, activities.length - HISTORY_WINDOW)); setInput(''); setAttachments([]); setRunning(true); setStatus('正在连接');
+    const text = input; const images = attachments; unverifiedToolRef.current = false; resetPerformance(); chatFollowRef.current = true; chatResetFollowRef.current = true; setChatAtBottom(true); historyAnchorRef.current = null; setHistoryStart(Math.max(0, activities.length - HISTORY_WINDOW)); setInput(''); setAttachments([]); setRunning(true); setStatus('正在连接');
     try {
       let session = current;
       if (!session) { session = await api<Session>('create_session'); metricBindingRef.current = metricKey(session.id, connection.id, connection.contextLength); setCurrent(session); }
@@ -423,16 +451,19 @@ export default function App() {
     finally { bindingBusyRef.current = false; setTerminalBusy(false); setTerminalOperation(''); }
   }
 
-  function beginUpdateInstall(): string | null {
+  function beginUpdateInstall(fromSettings: boolean): string | null {
     if (bindingBusyRef.current) return '请先停止当前任务或终端命令，再安装更新。';
     if (file && fileText !== file.text) return '请先保存正在编辑的文件，再安装更新。';
     if (input || attachments.length || command) return '请先发送或清空未提交的消息、图片和终端命令。';
-    if (settings || projectDialog) return '请先关闭设置或项目操作，再安装更新。';
+    if (projectDialog || (settings && !fromSettings)) return '请先关闭设置或项目操作，再安装更新。';
+    if (settings && settingsDirtyRef.current) return '请先保存或取消未完成的设置，再安装更新。';
+    if (settings && fromSettings) setSettings(null);
     bindingBusyRef.current = true; setUpdateInstalling(true); return null;
   }
   function endUpdateInstall() {
     bindingBusyRef.current = false; setUpdateInstalling(false);
   }
+  const update = useAppUpdates(beginUpdateInstall, endUpdateInstall);
 
   const entries = Array.isArray(files?.entries) ? files.entries as Json[] : [];
   return <div className="app-shell">
@@ -468,7 +499,7 @@ export default function App() {
         </div>  : <div className="messages">{historyStart > 0 && <button className="load-history" aria-label="加载更早记录" onClick={() => {
           const viewport = scrollRef.current; if (viewport) historyAnchorRef.current = { height: viewport.scrollHeight, top: viewport.scrollTop };
           chatFollowRef.current = false; setChatAtBottom(false); setHistoryStart(start => Math.max(0, start - HISTORY_WINDOW));
-        }}>加载更早记录 · {historyStart} 条</button>}{activities.slice(historyStart).map(item => <ActivityCard item={item} onCheckOperation={checkOperation} key={item.id} />)}</div>}</div>
+        }}>加载更早记录 · {historyStart} 条</button>}{activities.slice(historyStart).map(item => <ActivityCard item={item} onCheckOperation={checkOperation} onRestoreDeleted={restoreDeleted} restoreDisabled={running || terminalBusy || projectBusy || restoreBusy} key={item.id} />)}</div>}</div>
         {!chatAtBottom && <button className="jump-latest" onClick={() => { chatFollowRef.current = true; setChatAtBottom(true); const viewport = scrollRef.current; if (viewport) { viewport.scrollTop = viewport.scrollHeight; chatScrollTopRef.current = viewport.scrollTop; } }}><ArrowDown size={13} />回到最新</button>}
         <div className="composer-area"><div className={`composer ${running ? 'is-running' : ''}`}><textarea ref={inputRef} aria-label="消息" placeholder={workspace ? `向 Gemma 描述任务，工作目录：${basename(workspace)}…` : '描述你的任务，或先连接模型、选择项目…'} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} rows={3} />{attachments.length > 0 && <div className="composer-attachments">{attachments.map((image, i) => <span key={`${image.name}-${i}`}>{image.name}<button aria-label={`移除图片 ${image.name}`} onClick={() => setAttachments(old => old.filter((_, index) => index !== i))}><X size={12} /></button></span>)}</div>}<div className="composer-toolbar"><div className="composer-actions"><button onClick={selectWorkspace}><Plus size={16} /><span>项目上下文</span></button><button disabled={running} onClick={() => imageInputRef.current?.click()}><ImagePlus size={15} /><span>添加图片</span></button><input ref={imageInputRef} type="file" accept="image/png,image/jpeg" multiple hidden aria-label="选择图片" onChange={e => { const files = Array.from(e.currentTarget.files || []); e.currentTarget.value = ''; void addImages(files); }} /></div><div className="composer-meta"><span className={`composer-status ${status === '就绪' ? 'is-idle' : ''}`}>{running && <Loader2 size={11} className="spin" />}{status === '就绪' ? <><Code2 size={13} /> 编程与电脑操作</> : <><span role="status">{status}</span><QueueElapsed since={queueSince} /></>}</span>{running ? <button className="send-button stop" aria-label="停止" onClick={() => void stop()}><Square size={14} fill="currentColor" /></button> : <button className="send-button" aria-label="发送" disabled={(!input.trim() && attachments.length === 0) || terminalBusy || projectBusy} onClick={() => void send()}><ArrowUp size={19} /></button>}</div></div></div></div>
       </section>
@@ -484,10 +515,10 @@ export default function App() {
         terminalScrollTopRef.current = output.scrollTop;
       }}>{terminal ?? '命令将在当前会话绑定的执行设备上运行。'}</pre><form onSubmit={e => { e.preventDefault(); void runCommand(); }}><span>❯</span><input aria-label="终端命令" placeholder={workspace ? '输入命令…' : '请先选择项目'} value={command} onChange={e => setCommand(e.target.value)} disabled={!workspace || terminalBusy || running || projectBusy} />{terminalBusy && <button type="button" className="terminal-stop" aria-label="停止终端命令" onClick={() => void api('interrupt', { sessionId: terminalOperation }).catch(notify)}><Square size={12} fill="currentColor" />停止</button>}</form></section>}
       {performanceOpen && <PerformancePanel usage={usage} metrics={metrics} queueSince={queueSince} queueWaitMs={queueWaitMs} status={status} compaction={compaction} onClose={() => setPerformanceOpen(false)} />}
-      <footer className="statusbar"><div><button onClick={() => setTerminalOpen(!terminalOpen)}><Terminal size={13} />终端</button><span className="statusbar-divider" /><span><HardDrive size={12} />{deviceName}</span><span className="statusbar-connection"><span className={`status-dot ${modelId ? 'configured' : ''}`} />{modelId ? '已配置模型' : '模型未配置'}</span></div><div><button className="performance-toggle" aria-label="推理性能与上下文" aria-expanded={performanceOpen} onClick={() => setPerformanceOpen(open => !open)} title={usage.budget ? `输入预算 ${usage.budget.toLocaleString()}；实际加载上下文 ${usage.context.toLocaleString()}` : '查看上下文预算、真实用量与最近请求性能'}><span className="context-track"><i style={{ width: `${Math.min(100, usage.input / (usage.budget || usage.context) * 100)}%` }} /></span>{usage.estimated ? '约 ' : ''}{usage.input.toLocaleString()} / {usage.budget ? `${usage.budget.toLocaleString()} 输入` : `${(usage.context / 1024).toFixed(0)}K`}<ChevronDown size={10} /></button><span className="statusbar-divider" />{desktop && <UpdateControl beginInstall={beginUpdateInstall} endInstall={endUpdateInstall} />}<span>Gemma Harness</span></div></footer>
+      <footer className="statusbar"><div><button onClick={() => setTerminalOpen(!terminalOpen)}><Terminal size={13} />终端</button><span className="statusbar-divider" /><span><HardDrive size={12} />{deviceName}</span><span className="statusbar-connection"><span className={`status-dot ${modelId ? 'configured' : ''}`} />{modelId ? '已配置模型' : '模型未配置'}</span></div><div><button className="performance-toggle" aria-label="推理性能与上下文" aria-expanded={performanceOpen} onClick={() => setPerformanceOpen(open => !open)} title={usage.budget ? `输入预算 ${usage.budget.toLocaleString()}；实际加载上下文 ${usage.context.toLocaleString()}` : '查看上下文预算、真实用量与最近请求性能'}><span className="context-track"><i style={{ width: `${Math.min(100, usage.input / (usage.budget || usage.context) * 100)}%` }} /></span>{usage.estimated ? '约 ' : ''}{usage.input.toLocaleString()} / {usage.budget ? `${usage.budget.toLocaleString()} 输入` : `${(usage.context / 1024).toFixed(0)}K`}<ChevronDown size={10} /></button><span className="statusbar-divider" />{desktop && <UpdateControl update={update} />}<span>Gemma Harness</span></div></footer>
     </main>
     {updateInstalling && <div className="update-lock" role="status" aria-live="polite"><Loader2 size={18} className="spin" />正在安装更新，应用即将重启…</div>}
-    {settings && <Settings initialTab={settings} config={config} onClose={() => setSettings(null)} onSave={(next, savedAppearanceOnly) => { const appearanceOnly = savedAppearanceOnly || withoutAppearance(configRef.current) === withoutAppearance(next); setConfig(next); if (appearanceOnly) { void refresh(); return; } const selected = next.connections.find(c => c.id === next.selectedConnectionId); metricBindingRef.current = metricKey(undefined, selected?.id, selected?.contextLength); resetPerformance(selected?.contextLength || 8192); setConfig(next); setCurrent(null); setActivities([]); setHistoryStart(0); chatFollowRef.current = true; setChatAtBottom(true); setFiles(null); void refresh(); }} onError={notify} />}
+    {settings && <Settings initialTab={settings} config={config} update={update} onDirtyChange={recordSettingsDirty} onClose={() => setSettings(null)} onSave={(next, savedAppearanceOnly) => { const appearanceOnly = savedAppearanceOnly || withoutAppearance(configRef.current) === withoutAppearance(next); setConfig(next); if (appearanceOnly) { void refresh(); return; } const selected = next.connections.find(c => c.id === next.selectedConnectionId); metricBindingRef.current = metricKey(undefined, selected?.id, selected?.contextLength); resetPerformance(selected?.contextLength || 8192); setConfig(next); setCurrent(null); setActivities([]); setHistoryStart(0); chatFollowRef.current = true; setChatAtBottom(true); setFiles(null); void refresh(); }} onError={notify} />}
     {projectDialog && <ProjectDialog key={`${projectDialog.project.id}:${projectDialog.action}`} project={projectDialog.project} action={projectDialog.action} onClose={() => setProjectDialog(null)} onConfirm={manageProject} />}
     {toast && <div role="alert" className="toast"><Unplug size={16} /><span>{toast}</span><button aria-label="关闭提示" onClick={() => setToast('')}><X size={14} /></button></div>}
   </div>;

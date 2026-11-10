@@ -57,6 +57,7 @@ export async function installDesktopFixture(page: Page, options: FixtureOptions 
       async invoke(cmd: string, args: Record<string, unknown> = {}) {
         calls.push({ cmd, args: JSON.parse(JSON.stringify(args)) as Record<string, unknown> });
         if (cmd === 'plugin:dialog|open') return null;
+        if (cmd === 'plugin:app|version') return '0.3.2';
         if (cmd === 'stream_turn') {
           const id = (args.onEvent as { id: number }).id;
           for (let index = 0; index < streamEvents.length; index++) {
@@ -97,6 +98,7 @@ export async function installDesktopFixture(page: Page, options: FixtureOptions 
           case 'discover': return structuredClone(discovery);
           case 'diagnose': return structuredClone(diagnosis);
           case 'engine_start': return { running: true, source: 'test_fixture' };
+          case 'restore_deleted_file': return { restored: true, path: 'old.txt' };
           case 'load_session': return { events: [] };
           case 'host_status': return { running: false, status: 'not_started', source: 'test_fixture' };
           case 'host_stop': return { running: false, status: 'stopped', source: 'test_fixture' };

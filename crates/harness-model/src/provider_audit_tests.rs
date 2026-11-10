@@ -51,6 +51,55 @@ fn successful_chat_body() -> String {
 }
 
 #[tokio::test]
+async fn template_rendering_probe_checks_reserved_fields_and_tool_result_without_user_content() {
+    for (prompt, expected) in [
+        ("HARNESS_TEMPLATE_TYPE_MARKER HARNESS_TEMPLATE_DESCRIPTION_MARKER HARNESS_TEMPLATE_NESTED_MARKER HARNESS_TEMPLATE_RESULT_MARKER", "passed"),
+        ("HARNESS_TEMPLATE_RESULT_MARKER", "failed"),
+    ] {
+        let (base_url, task) = scripted_http(vec![
+            (200, "application/json".into(), json!({"data":[{"id":"gemma-4-test"}]}).to_string()),
+            (200, "application/json".into(), json!({"prompt":prompt}).to_string()),
+            (200, "application/json".into(), json!({"default_generation_settings":{"params":{"temperature":1.0,"top_p":0.95,"top_k":64,"min_p":0.05}},"chat_template":"PRIVATE_TEMPLATE_FIXTURE"}).to_string()),
+        ]).await;
+        let provider = Provider::new(ConnectionConfig {base_url, model:"gemma-4-test".into(), backend:"llama_cpp".into(), ..Default::default()}).unwrap();
+        let report = provider.template_rendering_diagnostic().await;
+        assert_eq!(report["status"], expected);
+        assert_eq!(report["checks"]["toolResult"], true);
+        assert_eq!(report["serverReported"]["defaultSampling"]["topK"], 64);
+        assert_eq!(report["serverReported"]["defaultSampling"]["minP"], 0.05);
+        assert_eq!(report["serverReported"]["templateRepresentation"]["sha256"], format!("{:x}",Sha256::digest(b"PRIVATE_TEMPLATE_FIXTURE")));
+        assert!(!report.to_string().contains("PRIVATE_TEMPLATE_FIXTURE"));
+        let requests = task.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        let body = &requests[1];
+        assert_eq!(body["tools"][0]["function"]["parameters"]["properties"]["type"]["description"], "HARNESS_TEMPLATE_TYPE_MARKER");
+        assert_eq!(body["messages"][3]["content"], "HARNESS_TEMPLATE_RESULT_MARKER");
+        assert!(!body.to_string().contains("private user content"));
+    }
+}
+
+#[tokio::test]
+async fn template_rendering_is_unknown_when_server_model_is_ambiguous() {
+    let (base_url, task) = scripted_http(vec![(
+        200,
+        "application/json".into(),
+        json!({"data":[{"id":"gemma-4-test"},{"id":"other"}]}).to_string(),
+    )])
+    .await;
+    let provider = Provider::new(ConnectionConfig {
+        base_url,
+        model: "gemma-4-test".into(),
+        backend: "llama_cpp".into(),
+        ..Default::default()
+    })
+    .unwrap();
+    let report = provider.template_rendering_diagnostic().await;
+    assert_eq!(report["status"], "unknown");
+    assert_eq!(report["tested"], false);
+    assert_eq!(task.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn llama_template_token_count_includes_tools_and_skips_multimodal() {
     let (base_url, task) = scripted_http(vec![
         (

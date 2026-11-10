@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "harness-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "harness-desktop"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "harness-core",
  "serde_json",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "harness-executor"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "harness-model"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "harness-remote"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "harness-update-verify"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify",

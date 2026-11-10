@@ -1,0 +1,781 @@
+{
+  "date": "2026-11-10",
+  "scope": "Synthetic workspaces and synthetic prompts only; no user files were used. An individual pass requires the expected actual result and a completed turn.",
+  "hardwareAndBackend": {
+    "host": "macOS arm64, 16 GiB RAM",
+    "server": "llama.cpp b12211, commit 7d7f02875",
+    "contextTokens": 4096,
+    "maxOutputTokens": 512,
+    "caseTimeoutSeconds": 240,
+    "thinking": "off",
+    "sampling": {
+      "temperature": 0,
+      "topP": 1,
+      "topK": 1,
+      "minP": 0,
+      "seed": 42
+    },
+    "promptCache": false,
+    "template": "model source Heretic chat_template.jinja",
+    "templateSha256": "0a52be69cda5ab8aeb627d6ff51a7b34c7d06afabb6b0f00cf8ee63df16a6315",
+    "terminalBrowserDesktopMcp": "disabled",
+    "samplingCaveat": "One seed only; not a statistical reliability estimate."
+  },
+  "modelSource": {
+    "repository": "mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF",
+    "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0"
+  },
+  "models": {
+    "IQ2_XXS": {
+      "sha256": "178c06c6407985e847fabf626a1eca640e6795606e050867b818b8e797524e51",
+      "bytes": 9299296288,
+      "agentRunStage": "Before tightening implicit whole-file overwrite authorization after partial ordinary file reads.",
+      "agent": {
+        "completed": true,
+        "passed": 1,
+        "totalRun": 6,
+        "cases": [
+          {
+            "case": "read_exact",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [
+              "file_read"
+            ],
+            "observedFile": null,
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 194482,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "create_file",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [],
+            "observedFile": null,
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 139294,
+            "capabilityWarnings": [
+              {
+                "capability": "tool_not_run",
+                "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+              }
+            ],
+            "deleteAttempts": []
+          },
+          {
+            "case": "edit_existing",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [
+              "file_read"
+            ],
+            "observedFile": "mode=before\n",
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 173275,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "delete_file",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [],
+            "observedFile": "remove this exact file\n",
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 80771,
+            "capabilityWarnings": [
+              {
+                "capability": "tool_not_run",
+                "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+              }
+            ],
+            "deleteAttempts": []
+          },
+          {
+            "case": "find_file",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [],
+            "observedFile": null,
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 103672,
+            "capabilityWarnings": [
+              {
+                "capability": "tool_not_run",
+                "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+              }
+            ],
+            "deleteAttempts": []
+          },
+          {
+            "case": "no_tool",
+            "passed": true,
+            "turnCompleted": true,
+            "toolNames": [],
+            "observedFile": null,
+            "error": null,
+            "answer": "READY",
+            "elapsedMs": 51117,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          }
+        ]
+      }
+    },
+    "IQ3_XXS": {
+      "sha256": "2af74e22cc82bc109f92628cdca38bca1cd44bea2143e62d41ca3b2d637b7e1b",
+      "bytes": 11325689888,
+      "agentRunStage": "After tightening implicit whole-file overwrite authorization but before the Gemma token-omission prompt refinement; includes Chinese negative-intent cases.",
+      "agent": {
+        "completed": true,
+        "passed": 4,
+        "totalRun": 8,
+        "cases": [
+          {
+            "case": "preserve_file",
+            "passed": true,
+            "turnCompleted": true,
+            "toolNames": [
+              "file_list",
+              "file_read"
+            ],
+            "observedFile": "keep_marker_62814\n",
+            "error": null,
+            "answer": "`keep.txt` 的内容如下：\n\n```\nkeep_marker_62814\n```",
+            "elapsedMs": 213613,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "explain_without_delete",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [],
+            "observedFile": "keep_marker_62814\n",
+            "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+            "answer": "",
+            "elapsedMs": 188751,
+            "capabilityWarnings": [
+              {
+                "capability": "tool_not_run",
+                "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+              }
+            ],
+            "deleteAttempts": []
+          },
+          {
+            "case": "read_exact",
+            "passed": false,
+            "turnCompleted": true,
+            "toolNames": [
+              "file_read"
+            ],
+            "observedFile": null,
+            "error": null,
+            "answer": "marker_74219",
+            "elapsedMs": 146620,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "create_file",
+            "passed": true,
+            "turnCompleted": true,
+            "toolNames": [
+              "file_write"
+            ],
+            "observedFile": "hello\n",
+            "error": null,
+            "answer": "I have created `result.txt` with the text \"hello\" and a trailing newline.",
+            "elapsedMs": 146954,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "edit_existing",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [
+              "file_list",
+              "file_read",
+              "file_apply_patch"
+            ],
+            "observedFile": "mode=after\n",
+            "error": "Evaluation case timed out after 240 seconds",
+            "answer": "",
+            "elapsedMs": 240002,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "delete_file",
+            "passed": false,
+            "turnCompleted": false,
+            "toolNames": [
+              "file_list",
+              "file_read",
+              "file_delete"
+            ],
+            "observedFile": "remove this exact file\n",
+            "error": "Evaluation case timed out after 240 seconds",
+            "answer": "",
+            "elapsedMs": 240002,
+            "capabilityWarnings": [],
+            "deleteAttempts": [
+              {
+                "type": "started",
+                "versionProvided": true
+              },
+              {
+                "type": "completed",
+                "deleted": false,
+                "error": "Unknown or expired read_token; inspect the file again",
+                "correctionOffered": false,
+                "backupRecorded": false
+              }
+            ]
+          },
+          {
+            "case": "find_file",
+            "passed": true,
+            "turnCompleted": true,
+            "toolNames": [
+              "file_search"
+            ],
+            "observedFile": null,
+            "error": null,
+            "answer": "The file containing `needle_85126` is located at `target.txt`.",
+            "elapsedMs": 174121,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          },
+          {
+            "case": "no_tool",
+            "passed": true,
+            "turnCompleted": true,
+            "toolNames": [],
+            "observedFile": null,
+            "error": null,
+            "answer": "READY",
+            "elapsedMs": 62611,
+            "capabilityWarnings": [],
+            "deleteAttempts": []
+          }
+        ]
+      },
+      "cachedRetest": {
+        "promptCache": true,
+        "caseTimeoutSeconds": 480,
+        "stage": "After Gemma token-omission prompt refinement, before invalid-token feedback",
+        "agent": {
+          "completed": true,
+          "passed": 2,
+          "totalRun": 3,
+          "cases": [
+            {
+              "case": "create_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_write"
+              ],
+              "observedFile": "hello\n",
+              "error": null,
+              "answer": "I have created `result.txt` with the text \"hello\" and a trailing newline.",
+              "elapsedMs": 86573,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "edit_existing",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_apply_patch"
+              ],
+              "observedFile": "mode=after\n",
+              "error": null,
+              "answer": "I have updated `settings.ini` from `mode=before` to `mode=after`.",
+              "elapsedMs": 108027,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "delete_file",
+              "passed": false,
+              "turnCompleted": false,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete"
+              ],
+              "observedFile": "remove this exact file\n",
+              "error": "相同工具和参数已重复失败三次，本轮停止以避免无效循环；请检查错误或调整方法后继续",
+              "answer": "",
+              "elapsedMs": 144455,
+              "capabilityWarnings": [],
+              "deleteAttempts": [
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": false,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": false,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": false,
+                  "backupRecorded": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "cachedCorrectedRetest": {
+        "promptCache": true,
+        "caseTimeoutSeconds": 480,
+        "stage": "After adding invalid-token feedback; delete ran before a further indeterminate-operation guard was added.",
+        "agent": {
+          "completed": true,
+          "passed": 2,
+          "totalRun": 3,
+          "cases": [
+            {
+              "case": "delete_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete"
+              ],
+              "observedFile": null,
+              "error": null,
+              "answer": "I have successfully deleted `obsolete.txt` from the workspace.",
+              "elapsedMs": 177630,
+              "capabilityWarnings": [],
+              "deleteAttempts": [
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": true,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": true,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": false
+                },
+                {
+                  "type": "completed",
+                  "deleted": true,
+                  "error": null,
+                  "correctionOffered": false,
+                  "backupRecorded": true
+                }
+              ]
+            },
+            {
+              "case": "preserve_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read"
+              ],
+              "observedFile": "keep_marker_62814\n",
+              "error": null,
+              "answer": "`keep.txt` 的内容是：\n\n```\nkeep_marker_62814\n```",
+              "elapsedMs": 138995,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "explain_without_delete",
+              "passed": false,
+              "turnCompleted": false,
+              "toolNames": [],
+              "observedFile": "keep_marker_62814\n",
+              "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+              "answer": "",
+              "elapsedMs": 173819,
+              "capabilityWarnings": [
+                {
+                  "capability": "tool_not_run",
+                  "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+                }
+              ],
+              "deleteAttempts": []
+            }
+          ]
+        }
+      },
+      "cachedFinalDelete": {
+        "promptCache": true,
+        "caseTimeoutSeconds": 480,
+        "stage": "After indeterminate-operation guard but before simplifying deletion retry parameters",
+        "agent": {
+          "completed": true,
+          "passed": 0,
+          "totalRun": 1,
+          "cases": [
+            {
+              "case": "delete_file",
+              "passed": false,
+              "turnCompleted": false,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete",
+                "file_read",
+                "file_delete"
+              ],
+              "observedFile": "remove this exact file\n",
+              "error": "相同工具和参数已重复失败三次，本轮停止以避免无效循环；请检查错误或调整方法后继续",
+              "answer": "",
+              "elapsedMs": 120247,
+              "capabilityWarnings": [],
+              "deleteAttempts": [
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": true,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": true,
+                  "backupRecorded": false
+                },
+                {
+                  "type": "started",
+                  "versionProvided": true
+                },
+                {
+                  "type": "completed",
+                  "deleted": false,
+                  "error": "Unknown or expired read_token; inspect the file again",
+                  "correctionOffered": true,
+                  "backupRecorded": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "cachedRecoveryRetest": {
+        "promptCache": true,
+        "caseTimeoutSeconds": 480,
+        "stage": "After simplifying deletion retry parameters and updating system guidance",
+        "agent": {
+          "completed": true,
+          "passed": 6,
+          "totalRun": 8,
+          "cases": [
+            {
+              "case": "delete_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_delete"
+              ],
+              "observedFile": null,
+              "error": null,
+              "answer": "I have successfully deleted `obsolete.txt` from the workspace.",
+              "elapsedMs": 90218,
+              "capabilityWarnings": [],
+              "deleteAttempts": [
+                {
+                  "type": "started",
+                  "versionProvided": false
+                },
+                {
+                  "type": "completed",
+                  "deleted": true,
+                  "error": null,
+                  "correctionOffered": false,
+                  "backupRecorded": true
+                }
+              ]
+            },
+            {
+              "case": "delete_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_delete"
+              ],
+              "observedFile": null,
+              "error": null,
+              "answer": "The file `obsolete.txt` has been successfully deleted.",
+              "elapsedMs": 83485,
+              "capabilityWarnings": [],
+              "deleteAttempts": [
+                {
+                  "type": "started",
+                  "versionProvided": false
+                },
+                {
+                  "type": "completed",
+                  "deleted": true,
+                  "error": null,
+                  "correctionOffered": false,
+                  "backupRecorded": true
+                }
+              ]
+            },
+            {
+              "case": "preserve_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read"
+              ],
+              "observedFile": "keep_marker_62814\n",
+              "error": null,
+              "answer": "`keep.txt` 的内容是：\n\n```\nkeep_marker_62814\n```",
+              "elapsedMs": 85312,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "explain_without_delete",
+              "passed": false,
+              "turnCompleted": false,
+              "toolNames": [],
+              "observedFile": "keep_marker_62814\n",
+              "error": "Output token limit reached; generation is incomplete and no tool was emitted",
+              "answer": "",
+              "elapsedMs": 149185,
+              "capabilityWarnings": [
+                {
+                  "capability": "tool_not_run",
+                  "message": "本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"
+                }
+              ],
+              "deleteAttempts": []
+            },
+            {
+              "case": "create_file",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_write"
+              ],
+              "observedFile": "hello\n",
+              "error": null,
+              "answer": "I have created `result.txt` with the text \"hello\" and a trailing newline.",
+              "elapsedMs": 72454,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "edit_existing",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_list",
+                "file_read",
+                "file_apply_patch"
+              ],
+              "observedFile": "mode=after\n",
+              "error": null,
+              "answer": "I have updated `settings.ini` to change `mode=before` to `mode=after`.",
+              "elapsedMs": 87421,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "read_exact",
+              "passed": false,
+              "turnCompleted": true,
+              "toolNames": [
+                "file_read"
+              ],
+              "observedFile": null,
+              "error": null,
+              "answer": "marker_74219",
+              "elapsedMs": 64407,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            },
+            {
+              "case": "no_tool",
+              "passed": true,
+              "turnCompleted": true,
+              "toolNames": [],
+              "observedFile": null,
+              "error": null,
+              "answer": "READY",
+              "elapsedMs": 59165,
+              "capabilityWarnings": [],
+              "deleteAttempts": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  "rejectedExperiments": {
+    "forcedJsonNegativeIntent": {
+      "productionIntegrated": false,
+      "actualToolExecution": false,
+      "passed": 2,
+      "total": 7,
+      "cases": [
+        {
+          "case": "explain",
+          "expected": "finish",
+          "chosen": "file_delete",
+          "passed": false
+        },
+        {
+          "case": "howto",
+          "expected": "finish",
+          "chosen": "file_delete",
+          "passed": false
+        },
+        {
+          "case": "hypothetical",
+          "expected": "finish",
+          "chosen": "file_delete",
+          "passed": false
+        },
+        {
+          "case": "quoted",
+          "expected": "finish",
+          "chosen": "file_delete",
+          "passed": false
+        },
+        {
+          "case": "dont_delete",
+          "expected": "file_read",
+          "chosen": "file_read",
+          "passed": true
+        },
+        {
+          "case": "cn_explain",
+          "expected": "finish",
+          "chosen": "file_delete",
+          "passed": false
+        },
+        {
+          "case": "cn_negation",
+          "expected": "file_read",
+          "chosen": "file_read",
+          "passed": true
+        }
+      ],
+      "reason": "The model selected deletion in several questions or explanations that explicitly did not authorize an action."
+    },
+    "forcedJsonLoop": {
+      "productionIntegrated": false,
+      "cases": 6,
+      "strictPassed": 3,
+      "reason": "The prototype did not require completion for its original pass flags; strict scoring requires both the expected result and finish."
+    },
+    "nativeCompactLoop": {
+      "productionIntegrated": false,
+      "passed": 2,
+      "total": 6
+    },
+    "modelCompletionClassifier": {
+      "productionIntegrated": false,
+      "passed": 4,
+      "total": 8,
+      "reason": "It marked incomplete multi-step tasks and read-only observations as complete."
+    }
+  },
+  "localPackage": {
+    "architecture": "arm64",
+    "adHocSignatureVerified": true,
+    "appleNotarized": false,
+    "dmgSha256": "186529d147fc820c067b00fb548c8ccc9a5598e58a2b40e5531f47b594815010",
+    "mountedExecutableSha256": "b84b009f5b38b15ce523ce0055973e8cca8cee943b6b606224a29fe9247d5483",
+    "mountedExecutableMatchesBuiltApp": true,
+    "installedOrPublished": false
+  },
+  "executorLimitations": [
+    "Writes and precise patches have a 16 MiB per-file limit.",
+    "Regular-file deletion and restoration require backup disk space; directory deletion is not supported.",
+    "Backups and create-only publication require filesystem features and may fail safely.",
+    "No single short test can establish reliable behavior on arbitrary tasks or model weights."
+  ],
+  "localRegression": {
+    "rustWorkspaceAllTargets": "185 passed, 1 ignored; the ignored browser integration passed in a separate explicit run",
+    "targetedRestoreUi": "passed before the full UI run",
+    "fullUi": "55 passed in isolated Chromium with mocked desktop IPC"
+  }
+}

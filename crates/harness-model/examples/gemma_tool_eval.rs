@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use harness_model::{ChatMessage, ConnectionConfig, Provider, ProviderEvent, ToolDefinition};
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::{collections::BTreeSet, time::Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -20,13 +20,21 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
         parameters: json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
     }
 }
-async fn generate(
+async fn generate_with_partial(
     provider: &Provider,
     messages: Vec<ChatMessage>,
     tools: Vec<ToolDefinition>,
-) -> Result<Vec<ProviderEvent>> {
+) -> (Result<()>, Vec<ProviderEvent>) {
     let (tx, mut rx) = mpsc::channel(256);
-    let request = provider.generate(messages, tools, 512, tx, CancellationToken::new());
+    let max_output = match std::env::var("HARNESS_EVAL_MAX_OUTPUT")
+        .ok()
+        .map(|s| s.parse::<usize>())
+        .transpose()
+    {
+        Ok(value) => value.unwrap_or(512),
+        Err(error) => return (Err(error.into()), Vec::new()),
+    };
+    let request = provider.generate(messages, tools, max_output, tx, CancellationToken::new());
     let collect = async move {
         let mut events = Vec::new();
         while let Some(event) = rx.recv().await {
@@ -34,7 +42,15 @@ async fn generate(
         }
         events
     };
-    let (result, events) = tokio::join!(request, collect);
+    tokio::join!(request, collect)
+}
+
+async fn generate(
+    provider: &Provider,
+    messages: Vec<ChatMessage>,
+    tools: Vec<ToolDefinition>,
+) -> Result<Vec<ProviderEvent>> {
+    let (result, events) = generate_with_partial(provider, messages, tools).await;
     result?;
     Ok(events)
 }
@@ -59,6 +75,31 @@ async fn main() -> Result<()> {
         backend,
         model_family,
         thinking_mode,
+        context_length: std::env::var("HARNESS_EVAL_CONTEXT")
+            .ok()
+            .map(|s| s.parse::<usize>())
+            .transpose()?
+            .unwrap_or(8192),
+        temperature: std::env::var("HARNESS_EVAL_TEMPERATURE")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        top_p: std::env::var("HARNESS_EVAL_TOP_P")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        top_k: std::env::var("HARNESS_EVAL_TOP_K")
+            .ok()
+            .map(|s| s.parse::<u32>())
+            .transpose()?,
+        min_p: std::env::var("HARNESS_EVAL_MIN_P")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        seed: std::env::var("HARNESS_EVAL_SEED")
+            .ok()
+            .map(|s| s.parse::<u32>())
+            .transpose()?,
         api_key: std::env::var("HARNESS_EVAL_API_KEY").ok(),
         ..Default::default()
     };
@@ -152,12 +193,54 @@ async fn main() -> Result<()> {
             ),
             expected: json!({"point":{"x":2,"y":3}}),
         },
+        Case {
+            name: "reserved_property_names",
+            prompt: "Call configure with type alpha, description brief, and nested point type point with x 2.",
+            tool: tool(
+                "configure",
+                "Configure the supplied settings.",
+                json!({"type":{"type":"string","description":"Requested kind."},"description":{"type":"string","description":"Description text."},"nested":{"type":"object","properties":{"type":{"type":"string"},"x":{"type":"integer"}},"required":["type","x"]}}),
+                &["type", "description", "nested"],
+            ),
+            expected: json!({"type":"alpha","description":"brief","nested":{"type":"point","x":2}}),
+        },
     ];
+    let selected: Option<BTreeSet<String>> =
+        std::env::var("HARNESS_EVAL_CASES").ok().map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        });
+    let known: BTreeSet<&str> = cases
+        .iter()
+        .map(|case| case.name)
+        .chain([
+            "tool_selection",
+            "multi_tool_selection",
+            "no_tool",
+            "tool_roundtrip",
+        ])
+        .collect();
+    if let Some(requested) = &selected {
+        if requested.is_empty() || requested.iter().any(|name| !known.contains(name.as_str())) {
+            anyhow::bail!(
+                "HARNESS_EVAL_CASES must contain known comma-separated case names: {}",
+                known.into_iter().collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    let include = |name: &str| selected.as_ref().is_none_or(|names| names.contains(name));
     let mut results = Vec::new();
     for run in 0..repeats {
         for case in &cases {
+            if !include(case.name) {
+                continue;
+            }
             let started = Instant::now();
-            let response = generate(
+            let (response, events) = generate_with_partial(
                 &provider,
                 vec![
                     ChatMessage::text("system", "Follow the user request exactly."),
@@ -167,16 +250,36 @@ async fn main() -> Result<()> {
             )
             .await;
             let elapsed = started.elapsed().as_millis();
+            let text = events
+                .iter()
+                .filter_map(|e| {
+                    if let ProviderEvent::TextDelta { text } = e {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<String>();
+            let reasoning_bytes = events
+                .iter()
+                .filter_map(|e| {
+                    if let ProviderEvent::ReasoningDelta { text } = e {
+                        Some(text.len())
+                    } else {
+                        None
+                    }
+                })
+                .sum::<usize>();
             match response {
-                Ok(events) => {
+                Ok(()) => {
                     let calls:Vec<_>=events.iter().filter_map(|e| if let ProviderEvent::ToolCall{call}=e {Some(call)}else{None}).collect();
                     let args=calls.first().and_then(|call|serde_json::from_str::<Value>(&call.function.arguments).ok());
                     let passed=calls.len()==1 && calls[0].function.name==case.tool.name && args.as_ref()==Some(&case.expected);
                     let usage=events.iter().find_map(|e|if let ProviderEvent::Usage{input_tokens,output_tokens}=e {Some(json!({"input":input_tokens,"output":output_tokens}))}else{None});
                     let rejected=events.iter().find_map(|e|if let ProviderEvent::ToolBatchRejected{message}=e {Some(message)}else{None});
-                    results.push(json!({"run":run+1,"case":case.name,"passed":passed,"callCount":calls.len(),"actualArguments":args,"rejected":rejected,"elapsedMs":elapsed,"usage":usage}));
+                    results.push(json!({"run":run+1,"case":case.name,"passed":passed,"callCount":calls.len(),"actualTool":calls.first().map(|c|&c.function.name),"actualArguments":args,"rejected":rejected,"answer":text,"reasoningBytes":reasoning_bytes,"elapsedMs":elapsed,"usage":usage}));
                 }
-                Err(error) => results.push(json!({"run":run+1,"case":case.name,"passed":false,"error":format!("{error:#}"),"elapsedMs":elapsed})),
+                Err(error) => results.push(json!({"run":run+1,"case":case.name,"passed":false,"error":format!("{error:#}"),"answer":text,"reasoningBytes":reasoning_bytes,"elapsedMs":elapsed})),
             }
         }
         let weather = tool(
@@ -191,17 +294,18 @@ async fn main() -> Result<()> {
             json!({"city":{"type":"string","description":"City name."}}),
             &["city"],
         );
-        let started = Instant::now();
-        let selection = generate(
-            &provider,
-            vec![
-                ChatMessage::text("system", "Follow the user request exactly."),
-                ChatMessage::text("user", "Get the current time in Tokyo."),
-            ],
-            vec![weather.clone(), clock],
-        )
-        .await;
-        match selection {
+        if include("tool_selection") {
+            let started = Instant::now();
+            let selection = generate(
+                &provider,
+                vec![
+                    ChatMessage::text("system", "Follow the user request exactly."),
+                    ChatMessage::text("user", "Get the current time in Tokyo."),
+                ],
+                vec![weather.clone(), clock],
+            )
+            .await;
+            match selection {
             Ok(events) => {
                 let calls:Vec<_>=events.iter().filter_map(|e|if let ProviderEvent::ToolCall{call}=e{Some(call)}else{None}).collect();
                 let args=calls.first().and_then(|c|serde_json::from_str::<Value>(&c.function.arguments).ok());
@@ -210,17 +314,80 @@ async fn main() -> Result<()> {
             }
             Err(error) => results.push(json!({"run":run+1,"case":"tool_selection","passed":false,"error":format!("{error:#}"),"elapsedMs":started.elapsed().as_millis()})),
         }
-        let started = Instant::now();
-        let negative = generate(
-            &provider,
-            vec![
-                ChatMessage::text("system", "Follow the user request exactly."),
-                ChatMessage::text("user", "Reply exactly READY. Do not call any tool."),
-            ],
-            vec![weather.clone()],
-        )
-        .await;
-        match negative {
+        }
+        if include("multi_tool_selection") {
+            let selection_tools = vec![
+                tool(
+                    "read_file",
+                    "Read a file starting at a requested line.",
+                    json!({"path":{"type":"string"},"start_line":{"type":"integer"}}),
+                    &["path", "start_line"],
+                ),
+                tool(
+                    "search_files",
+                    "Search text across files.",
+                    json!({"query":{"type":"string"}}),
+                    &["query"],
+                ),
+                tool(
+                    "write_file",
+                    "Write a text file.",
+                    json!({"path":{"type":"string"},"content":{"type":"string"}}),
+                    &["path", "content"],
+                ),
+                tool(
+                    "list_files",
+                    "List files in a directory.",
+                    json!({"path":{"type":"string"}}),
+                    &["path"],
+                ),
+                tool(
+                    "delete_file",
+                    "Delete a file.",
+                    json!({"path":{"type":"string"}}),
+                    &["path"],
+                ),
+                tool(
+                    "read_history",
+                    "Read a prior session event.",
+                    json!({"event_id":{"type":"integer"}}),
+                    &["event_id"],
+                ),
+            ];
+            let started = Instant::now();
+            let multi = generate(
+                &provider,
+                vec![
+                    ChatMessage::text("system", "Follow the user request exactly."),
+                    ChatMessage::text(
+                        "user",
+                        "请调用 read_file，读取 notes/报表.txt，从第 1 行开始。不要修改文件。",
+                    ),
+                ],
+                selection_tools,
+            )
+            .await;
+            match multi {
+            Ok(events) => {
+                let calls: Vec<_> = events.iter().filter_map(|e| if let ProviderEvent::ToolCall { call } = e { Some(call) } else { None }).collect();
+                let args = calls.first().and_then(|c| serde_json::from_str::<Value>(&c.function.arguments).ok());
+                results.push(json!({"run":run+1,"case":"multi_tool_selection","passed":calls.len()==1 && calls[0].function.name=="read_file" && args.as_ref()==Some(&json!({"path":"notes/报表.txt","start_line":1})),"actualTool":calls.first().map(|c|&c.function.name),"actualArguments":args,"callCount":calls.len(),"elapsedMs":started.elapsed().as_millis()}));
+            }
+            Err(error) => results.push(json!({"run":run+1,"case":"multi_tool_selection","passed":false,"error":format!("{error:#}"),"elapsedMs":started.elapsed().as_millis()})),
+        }
+        }
+        if include("no_tool") {
+            let started = Instant::now();
+            let negative = generate(
+                &provider,
+                vec![
+                    ChatMessage::text("system", "Follow the user request exactly."),
+                    ChatMessage::text("user", "Reply exactly READY. Do not call any tool."),
+                ],
+                vec![weather.clone()],
+            )
+            .await;
+            match negative {
             Ok(events) => {
                 let calls=events.iter().filter(|e|matches!(e,ProviderEvent::ToolCall { .. } | ProviderEvent::ToolBatchRejected { .. })).count();
                 let text=events.iter().filter_map(|e|if let ProviderEvent::TextDelta{text}=e{Some(text.as_str())}else{None}).collect::<String>();
@@ -228,78 +395,93 @@ async fn main() -> Result<()> {
             }
             Err(error) => results.push(json!({"run":run+1,"case":"no_tool","passed":false,"error":format!("{error:#}"),"elapsedMs":started.elapsed().as_millis()})),
         }
-        let started = Instant::now();
-        let mut history = vec![
-            ChatMessage::text("system", "You are a helpful assistant."),
-            ChatMessage::text("user", "Get weather for Tokyo."),
-        ];
-        let first = generate(&provider, history.clone(), vec![weather.clone()]).await;
-        let roundtrip = async {
-            let events = first?;
-            let call = events
-                .iter()
-                .find_map(|e| {
-                    if let ProviderEvent::ToolCall { call } = e {
-                        Some(call.clone())
-                    } else {
-                        None
-                    }
-                })
-                .context("No tool call")?;
-            if call.function.name != "get_weather"
-                || serde_json::from_str::<Value>(&call.function.arguments)?
-                    != json!({"city":"Tokyo"})
-            {
-                anyhow::bail!("Wrong tool call or arguments");
-            }
-            history.push(ChatMessage {
-                role: "assistant".into(),
-                content: None,
-                tool_calls: Some(vec![call.clone()]),
-                tool_call_id: None,
-                name: None,
-                reasoning_content: None,
-            });
-            history.push(ChatMessage {
-                role: "tool".into(),
-                content: Some(json!("{\"temperature\":15}")),
-                tool_calls: None,
-                tool_call_id: Some(call.id),
-                name: Some("get_weather".into()),
-                reasoning_content: None,
-            });
-            let events = generate(&provider, history, vec![weather]).await?;
-            if events.iter().any(|e| {
-                matches!(
-                    e,
-                    ProviderEvent::ToolCall { .. } | ProviderEvent::ToolBatchRejected { .. }
-                )
-            }) {
-                anyhow::bail!("Unexpected additional tool call");
-            }
-            let answer = events
-                .iter()
-                .filter_map(|e| {
-                    if let ProviderEvent::TextDelta { text } = e {
-                        Some(text.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<String>();
-            Ok::<_, anyhow::Error>(answer)
         }
-        .await;
-        match roundtrip {
+        if include("tool_roundtrip") {
+            let started = Instant::now();
+            let mut history = vec![
+                ChatMessage::text("system", "You are a helpful assistant."),
+                ChatMessage::text("user", "Get weather for Tokyo."),
+            ];
+            let first = generate(&provider, history.clone(), vec![weather.clone()]).await;
+            let roundtrip = async {
+                let events = first.context("Initial tool-call generation failed")?;
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|event| {
+                        if let ProviderEvent::ReasoningDelta { text } = event {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let call = events
+                    .iter()
+                    .find_map(|e| {
+                        if let ProviderEvent::ToolCall { call } = e {
+                            Some(call.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .context("No tool call")?;
+                if call.function.name != "get_weather"
+                    || serde_json::from_str::<Value>(&call.function.arguments)?
+                        != json!({"city":"Tokyo"})
+                {
+                    anyhow::bail!("Wrong tool call or arguments");
+                }
+                history.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: None,
+                    tool_calls: Some(vec![call.clone()]),
+                    tool_call_id: None,
+                    name: None,
+                    reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
+                });
+                history.push(ChatMessage {
+                    role: "tool".into(),
+                    content: Some(json!("{\"temperature\":15}")),
+                    tool_calls: None,
+                    tool_call_id: Some(call.id),
+                    name: Some("get_weather".into()),
+                    reasoning_content: None,
+                });
+                let events = generate(&provider, history, vec![weather])
+                    .await
+                    .context("Tool-result follow-up generation failed")?;
+                if events.iter().any(|e| {
+                    matches!(
+                        e,
+                        ProviderEvent::ToolCall { .. } | ProviderEvent::ToolBatchRejected { .. }
+                    )
+                }) {
+                    anyhow::bail!("Unexpected additional tool call");
+                }
+                let answer = events
+                    .iter()
+                    .filter_map(|e| {
+                        if let ProviderEvent::TextDelta { text } = e {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
+                Ok::<_, anyhow::Error>(answer)
+            }
+            .await;
+            match roundtrip {
             Ok(answer) => results.push(json!({"run":run+1,"case":"tool_roundtrip","passed":answer.contains("15"),"answer":answer,"elapsedMs":started.elapsed().as_millis()})),
             Err(error) => results.push(json!({"run":run+1,"case":"tool_roundtrip","passed":false,"error":format!("{error:#}"),"elapsedMs":started.elapsed().as_millis()})),
+        }
         }
     }
     let passed = results.iter().filter(|r| r["passed"] == true).count();
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"model":config.model,"modelFamily":config.resolved_family(),"backend":config.resolved_backend(),"thinkingMode":config.thinking_mode,"repeats":repeats,"passed":passed,"total":results.len(),"results":results,"scope":"Synthetic tool-call arguments only; no tool effects, vision, or target-model certification."})
+            &json!({"model":config.model,"modelFamily":config.resolved_family(),"backend":config.resolved_backend(),"thinkingMode":config.thinking_mode,"context":config.context_length,"sampling":{"temperature":config.temperature,"topP":config.top_p,"topK":config.top_k,"minP":config.min_p,"seed":config.seed},"maxOutputTokens":std::env::var("HARNESS_EVAL_MAX_OUTPUT").ok().and_then(|s|s.parse::<usize>().ok()).unwrap_or(512),"selectedCases":selected,"repeats":repeats,"passed":passed,"total":results.len(),"results":results,"scope":"Synthetic tool-call arguments only; no tool effects, vision, or target-model certification."})
         )?
     );
     Ok(())

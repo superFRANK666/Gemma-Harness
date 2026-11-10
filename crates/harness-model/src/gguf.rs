@@ -79,7 +79,7 @@ pub fn inspect_gguf(path: &Path) -> Result<Value> {
             let value = reader
                 .string(MAX_STRING_BYTES)
                 .with_context(|| format!("Invalid GGUF chat template at {key}"))?;
-            let template = json!({"status":"present","sha256":format!("{:x}",Sha256::digest(value.as_bytes())),"byteLength":value.len(),"contentOmitted":true});
+            let template = json!({"status":"present","sha256":format!("{:x}",Sha256::digest(value.as_bytes())),"byteLength":value.len(),"contentOmitted":true,"knownIssues":inspect_template_issues(&value)});
             templates.insert(key.clone(), template.clone());
             captured.insert(key, template);
         } else {
@@ -133,6 +133,22 @@ pub fn inspect_gguf(path: &Path) -> Result<Value> {
             "message":"Metadata declarations and file names do not verify the base weights, repository revision, tensor integrity or runtime compatibility. Tensor descriptors and tensor data were not inspected."},
         "limits":{"maxMetadataBytes":MAX_HEADER_BYTES,"maxStringBytes":MAX_STRING_BYTES,"maxArrayElements":MAX_ARRAY_ELEMENTS,"maxArrayDepth":MAX_ARRAY_DEPTH}
     }))
+}
+
+/// Detect a specific legacy Gemma 4 pattern observed to filter real property
+/// names like `type` and `description` from tool declarations. This is a
+/// source-pattern warning, not proof of the runtime's effective rendered prompt.
+pub fn inspect_template_issues(source: &str) -> Vec<Value> {
+    if source.contains("macro format_parameters(")
+        && source.contains("if key not in standard_keys")
+        && source.contains("<|tool_call>")
+    {
+        vec![
+            json!({"code":"gemma4_schema_property_filter","detection":"source_pattern","message":"This legacy Gemma 4 template may omit tool properties named type, description, required, properties or nullable. Check the rendered prompt and consider an explicitly selected compatible template."}),
+        ]
+    } else {
+        Vec::new()
+    }
 }
 
 fn relevant_key(key: &str) -> bool {
@@ -440,6 +456,23 @@ mod tests {
         assert_eq!(result["exactModel"]["weightsHashed"], false);
         assert!(!result.to_string().contains("UNREAD_TENSOR_DATA"));
         assert!(!result.to_string().contains(template));
+    }
+
+    #[test]
+    fn identifies_legacy_gemma4_property_filter_without_exposing_template_text() {
+        let old = "{% macro format_parameters(properties, required) %}{% if key not in standard_keys %}<|tool_call>{% endif %}{% endmacro %}";
+        let modern = "{% macro format_parameters(properties, required, filter_keys=false) %}{% if not filter_keys or key not in standard_keys %}<|tool_call>{% endif %}{% endmacro %}";
+        let mut data = header(2);
+        kv_string(&mut data, "general.architecture", "gemma4");
+        kv_string(&mut data, "tokenizer.chat_template", old);
+        let fixture = Fixture::new(&data);
+        let result = inspect_gguf(&fixture.path).unwrap();
+        assert_eq!(
+            result["identity"]["chatTemplate"]["knownIssues"][0]["code"],
+            "gemma4_schema_property_filter"
+        );
+        assert!(!result.to_string().contains(old));
+        assert!(inspect_template_issues(modern).is_empty());
     }
 
     #[test]

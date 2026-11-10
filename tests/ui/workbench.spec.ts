@@ -15,7 +15,7 @@ test('browser preview shows an honest disconnected empty state', async ({ page }
   await page.getByRole('textbox', { name: '消息', exact: true }).fill('这是一条预览测试消息');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('当前为界面预览');
-  await expect(page.locator('.composer-status')).not.toContainText('已完成');
+  await expect(page.locator('.composer-status')).not.toContainText('回复已结束');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 });
 
@@ -36,6 +36,7 @@ test('all settings tabs render in browser preview without claiming backend succe
     { tab: '本地引擎', text: '模型 GGUF 文件', image: 'settings-engine' },
     { tab: '执行设备', text: '一次性配对串', image: 'settings-devices' },
     { tab: '工具与扩展', text: '原生桌面控制', image: 'settings-tools' },
+    { tab: '版本与控制', text: '桌面应用中可查看', image: 'settings-version' },
   ];
   for (const check of checks) {
     await dialog.getByRole('button', { name: check.tab, exact: true }).click();
@@ -157,7 +158,7 @@ test('Tauri Channel failure events do not turn into a completed task', async ({ 
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('.composer-status')).toContainText('执行失败');
   await expect(page.getByRole('alert')).toContainText('TEST_FIXTURE: backend unavailable');
-  await expect(page.locator('.composer-status')).not.toContainText('已完成');
+  await expect(page.locator('.composer-status')).not.toContainText('回复已结束');
   expect((await ipcCalls(page)).filter(call => call.cmd === 'stream_turn')).toHaveLength(1);
 });
 
@@ -176,6 +177,66 @@ test('image attachment and exact user whitespace reach the desktop stream', asyn
   const request = (await ipcCalls(page)).find(call => call.cmd === 'stream_turn')!;
   expect(request.args.input).toBe('  compare this\n');
   expect((request.args.images as string[])[0]).toMatch(/^data:image\/png;base64,/);
+});
+
+test('thinking budget retry shows a separate status before the final answer', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.workspace = '/tmp/retry-fixture';
+  config.connections[0].model = 'gemma-4-fixture';
+  await installDesktopFixture(page, { config, streamEvents: [
+    { type: 'reasoning_delta', text: 'first attempt' },
+    { type: 'model_retry', reason: 'output_token_limit', previousOutputTokens: 2048, outputTokens: 4096 },
+    { type: 'text_delta', text: 'final answer' },
+    { type: 'assistant_completed', text: 'final answer' },
+    { type: 'turn_completed', status: 'completed' },
+  ] });
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '消息', exact: true }).fill('Think about this');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByText(/增加预算重试/)).toBeVisible();
+  await expect(page.getByText('final answer', { exact: true })).toBeVisible();
+  await expect(page.locator('.composer-status')).toContainText('回复已结束');
+});
+
+test('a failed tool diagnostic warning is visible alongside model text', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.workspace = '/tmp/warning-fixture';
+  config.connections[0].model = 'gemma-4-fixture';
+  await installDesktopFixture(page, { config, streamEvents: [
+    { type: 'capability_warning', capability: 'tool_calling', message: 'TEST_FIXTURE diagnostic warning' },
+    { type: 'text_delta', text: 'model text' },
+    { type: 'assistant_completed', text: 'model text' },
+    { type: 'capability_warning', capability: 'tool_not_run', message: 'TEST_FIXTURE no tool execution event' },
+    { type: 'turn_completed', status: 'completed' },
+  ] });
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '消息', exact: true }).fill('Run the tool');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByText('TEST_FIXTURE diagnostic warning', { exact: true })).toBeVisible();
+  await expect(page.getByText('TEST_FIXTURE no tool execution event', { exact: true })).toBeVisible();
+  await expect(page.getByText('model text', { exact: true })).toBeVisible();
+  await expect(page.locator('.composer-status')).toContainText('需要核对');
+});
+
+test('a deleted file can be restored from the recorded operation', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.workspace = '/tmp/restore-fixture';
+  config.connections[0].model = 'gemma-4-fixture';
+  await installDesktopFixture(page, { config, streamEvents: [
+    { type: 'tool_started', callId: 'delete-call', name: 'file_delete', arguments: '{"path":"old.txt"}', deviceId: 'local' },
+    { type: 'tool_completed', callId: 'delete-call', name: 'file_delete', result: { deleted: true, path: 'old.txt', backup_artifact: 'TEST_FIXTURE', sha256: 'f'.repeat(64) } },
+    { type: 'assistant_completed', text: 'Deleted.' },
+    { type: 'turn_completed', status: 'completed' },
+  ] });
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '消息', exact: true }).fill('Delete old.txt');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await page.locator('.tool-card summary').filter({ hasText: 'file_delete' }).click();
+  await page.getByRole('button', { name: '恢复删除的文件' }).click();
+  await expect(page.getByText('已恢复 old.txt', { exact: true })).toBeVisible();
+  const calls = await ipcCalls(page);
+  const restore = calls.find(call => call.cmd === 'command' && (call.args.request as Record<string, unknown>)?.action === 'restore_deleted_file');
+  expect(restore?.args.request).toMatchObject({ action: 'restore_deleted_file', sessionId: 'fixture-session', callId: 'delete-call' });
 });
 
 test('message shortcuts still insert a newline and send', async ({ page }) => {
@@ -243,6 +304,21 @@ test('restarting the managed engine drops stale model settings and oversized out
   expect(managed?.modelFamily).toBe('auto');
   expect(managed?.thinkingMode).toBe('auto');
   expect(managed?.maxOutputTokens).toBeNull();
+});
+
+test('managed engine passes an explicitly selected chat template', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.engineConfig = { binaryPath: '/fixture/llama-server', modelPath: '/fixture/model.gguf', projectorPath: '', contextLength: 8192, port: 1235, gpuLayers: 0 };
+  await installDesktopFixture(page, { config });
+  await page.goto('/');
+  await page.getByRole('button', { name: /设置与连接/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: '本地引擎', exact: true }).click();
+  await dialog.getByRole('textbox', { name: /自定义聊天模板 · 可选/ }).fill('/fixture/gemma4.jinja');
+  await dialog.getByRole('button', { name: '启动推理', exact: true }).click();
+  await expect.poll(async () => (await ipcCalls(page)).some(call => (call.args.request as { action?: string })?.action === 'engine_start')).toBe(true);
+  const start = (await ipcCalls(page)).find(call => (call.args.request as { action?: string })?.action === 'engine_start');
+  expect((start?.args.request as { config: { chatTemplatePath: string } }).config.chatTemplatePath).toBe('/fixture/gemma4.jinja');
 });
 
 test('the desktop layout stays within a supported narrow window', async ({ page }) => {

@@ -4,12 +4,14 @@ use crate::normalize::Normalizer;
 use crate::normalize_tool_schema;
 use crate::sse::SseDecoder;
 use crate::{
-    target_model_profile, ChatMessage, ConnectionConfig, ProviderEvent, ToolCall, ToolDefinition,
+    target_model_profile, ChatMessage, ConnectionConfig, FunctionCall, ProviderEvent, ToolCall,
+    ToolDefinition,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use reqwest::{Client, Url};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -39,7 +41,7 @@ impl Provider {
         }
         if !matches!(
             config.model_family.as_str(),
-            "auto" | "gemma4" | "gemma3" | "functiongemma" | "other"
+            "auto" | "gemma4" | "gemma3" | "gemma3n" | "functiongemma" | "other"
         ) || !matches!(
             config.backend.as_str(),
             "auto" | "llama_cpp" | "lmstudio" | "other"
@@ -53,6 +55,28 @@ impl Provider {
                     "Output token limit must be at least 256 and at most half the loaded context"
                 );
             }
+        }
+        if config
+            .temperature
+            .is_some_and(|v| !v.is_finite() || !(0.0..=2.0).contains(&v))
+            || config
+                .top_p
+                .is_some_and(|v| !v.is_finite() || !(0.0 < v && v <= 1.0))
+            || config
+                .min_p
+                .is_some_and(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
+            || config.top_k.is_some_and(|v| v > 65536)
+            || config.seed == Some(u32::MAX)
+        {
+            bail!("Invalid sampling parameters");
+        }
+        if (config.top_k.is_some() || config.min_p.is_some())
+            && (config.resolved_backend() != "llama_cpp" || config.protocol == "responses")
+        {
+            bail!("Explicit top_k/min_p require llama.cpp Chat Completions");
+        }
+        if config.seed.is_some() && config.protocol == "responses" {
+            bail!("Explicit seed requires a Chat Completions-compatible backend");
         }
         if config.thinking_mode != "auto"
             && (config.resolved_family() != "gemma4"
@@ -223,6 +247,53 @@ impl Provider {
         if self.config.context_length > 0 && max_output_tokens >= self.config.context_length {
             bail!("Output token budget must leave room for input context");
         }
+        // Gemma 4's model card recommends image content before text. Reorder
+        // only the wire projection when there is at most one descriptive text
+        // part. Preserve interleaved captions and image order, canonical messages,
+        // and messages for other families.
+        let gemma4_messages = (self.config.resolved_family() == "gemma4"
+            && messages
+                .iter()
+                .any(|message| message.content.as_ref().is_some_and(contains_image)))
+        .then(|| {
+            let mut projected = messages.to_vec();
+            for message in &mut projected {
+                if !matches!(message.role.as_str(), "user" | "tool") {
+                    continue;
+                }
+                if let Some(Value::Array(parts)) = &mut message.content {
+                    let descriptive_texts = parts
+                        .iter()
+                        .filter(|part| {
+                            matches!(
+                                part["type"].as_str(),
+                                Some("text" | "input_text" | "output_text")
+                            ) && !part["text"]
+                                .as_str()
+                                .is_some_and(|text| text.starts_with("[Saved image artifact:"))
+                        })
+                        .count();
+                    let simple_parts = parts.iter().all(|part| {
+                        matches!(
+                            part.get("type").and_then(Value::as_str),
+                            Some(
+                                "text" | "input_text" | "output_text" | "image_url" | "input_image"
+                            )
+                        )
+                    });
+                    if simple_parts && descriptive_texts <= 1 {
+                        parts.sort_by_key(|part| {
+                            !matches!(
+                                part.get("type").and_then(Value::as_str),
+                                Some("image_url" | "input_image")
+                            )
+                        });
+                    }
+                }
+            }
+            projected
+        });
+        let messages = gemma4_messages.as_deref().unwrap_or(messages);
         if self.config.protocol == "responses" {
             let input = response_input(messages)?;
             let mut body = json!({"model": self.config.model, "input": input, "stream": true, "store": false, "max_output_tokens": max_output_tokens});
@@ -233,6 +304,7 @@ impl Provider {
                 }).collect::<Result<Vec<_>>>()?);
                 body["parallel_tool_calls"] = json!(false);
             }
+            self.apply_sampling(&mut body);
             Ok(body)
         } else {
             let mut wire_messages = serde_json::to_value(messages)?;
@@ -282,7 +354,22 @@ impl Provider {
                 }).collect::<Result<Vec<_>>>()?);
                 body["parallel_tool_calls"] = json!(false);
             }
+            self.apply_sampling(&mut body);
             Ok(body)
+        }
+    }
+
+    fn apply_sampling(&self, body: &mut Value) {
+        for (key, value) in [
+            ("temperature", self.config.temperature.map(|v| json!(v))),
+            ("top_p", self.config.top_p.map(|v| json!(v))),
+            ("top_k", self.config.top_k.map(|v| json!(v))),
+            ("min_p", self.config.min_p.map(|v| json!(v))),
+            ("seed", self.config.seed.map(|v| json!(v))),
+        ] {
+            if let Some(value) = value {
+                body[key] = value;
+            }
         }
     }
 
@@ -524,6 +611,100 @@ impl Provider {
         serde_json::from_slice(&bytes).context("Model discovery returned invalid JSON")
     }
 
+    /// Test the actual llama.cpp template with synthetic data only. A successful
+    /// render does not prove that the model will select or execute tools.
+    pub async fn template_rendering_diagnostic(&self) -> Value {
+        if self.config.resolved_family() != "gemma4"
+            || self.config.resolved_backend() != "llama_cpp"
+            || self.config.protocol == "responses"
+        {
+            return json!({"status":"unknown","tested":false,"message":"Template rendering probe requires Gemma 4 with llama.cpp Chat Completions."});
+        }
+        let run = async {
+            let models = self.get_json(self.route("models")).await?;
+            let entries = models["data"]
+                .as_array()
+                .context("Model list missing data")?;
+            if entries.len() != 1 || entries[0]["id"].as_str() != Some(self.config.model.as_str()) {
+                bail!("Template endpoint model identity is ambiguous");
+            }
+            let tool = ToolDefinition {
+                name: "harness_template_probe".into(),
+                description: "Synthetic template check; no tool is executed.".into(),
+                parameters: json!({"type":"object","properties":{
+                    "type":{"type":"string","description":"HARNESS_TEMPLATE_TYPE_MARKER"},
+                    "description":{"type":"string","description":"HARNESS_TEMPLATE_DESCRIPTION_MARKER"},
+                    "nested":{"type":"object","properties":{"type":{"type":"string","description":"HARNESS_TEMPLATE_NESTED_MARKER"}},"required":["type"]}
+                },"required":["type","description","nested"],"additionalProperties":false}),
+            };
+            let call = ToolCall {
+                id: "harness_template_call".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: tool.name.clone(),
+                    arguments:
+                        json!({"type":"alpha","description":"fixture","nested":{"type":"beta"}})
+                            .to_string(),
+                },
+            };
+            let messages = vec![
+                ChatMessage::text("system", "Synthetic template rendering diagnostic."),
+                ChatMessage::text("user", "Use the synthetic template probe."),
+                ChatMessage {
+                    role: "assistant".into(),
+                    content: None,
+                    tool_calls: Some(vec![call]),
+                    tool_call_id: None,
+                    name: None,
+                    reasoning_content: None,
+                },
+                ChatMessage {
+                    role: "tool".into(),
+                    content: Some(json!("HARNESS_TEMPLATE_RESULT_MARKER")),
+                    tool_calls: None,
+                    tool_call_id: Some("harness_template_call".into()),
+                    name: Some(tool.name.clone()),
+                    reasoning_content: None,
+                },
+            ];
+            let output = 256.min(self.config.context_length.saturating_sub(1));
+            let body = self.request_body(&messages, &[tool], output)?;
+            let response = self
+                .authorize(self.client.post(self.native_route("apply-template")))
+                .json(&body)
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!("Template endpoint did not accept the probe");
+            }
+            let bytes = read_bounded(response, &CancellationToken::new(), 8 * 1024 * 1024).await?;
+            let value: Value = serde_json::from_slice(&bytes)?;
+            let prompt = value["prompt"]
+                .as_str()
+                .context("Template endpoint returned no rendered prompt")?;
+            Ok::<_, anyhow::Error>(assess_template_rendering(prompt))
+        };
+        match tokio::time::timeout(Duration::from_secs(8), run).await {
+            Ok(Ok(mut result)) => {
+                result["serverReported"] = match tokio::time::timeout(
+                    Duration::from_secs(3),
+                    self.get_json(self.native_route("props")),
+                )
+                .await
+                {
+                    Ok(Ok(props)) => summarize_server_properties(&props),
+                    _ => {
+                        json!({"status":"unknown","message":"Server defaults and template were not reported."})
+                    }
+                };
+                result
+            }
+            _ => {
+                json!({"status":"unknown","tested":false,"message":"Template rendering endpoint is unavailable, rejected the synthetic probe, or its model identity is ambiguous."})
+            }
+        }
+    }
+
     /// Runs a harmless, real function-call/result/answer cycle. It never invokes user tools.
     pub async fn diagnose(&self) -> Result<Value> {
         let started = Instant::now();
@@ -573,20 +754,27 @@ impl Provider {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let image_input = diagnostic_result(self.probe_image_input(seed).await);
+        let (input_result, input_attempts) = self.probe_image_input_with_retry(seed).await;
+        let mut image_input = diagnostic_result(input_result);
+        image_input["attempts"] = json!(input_attempts);
         let image_tool = if image_input["status"] == "passed" {
-            diagnostic_result(self.probe_image_tool(seed.wrapping_add(1)).await)
+            let (result, attempts) = self.probe_image_tool_with_retry(seed.wrapping_add(2)).await;
+            let mut report = diagnostic_result(result);
+            report["attempts"] = json!(attempts);
+            report
         } else {
             json!({"status":"unknown","tested":false,"message":"Image tool results were not tested because image input did not pass."})
         };
         let vision_passed = image_input["status"] == "passed" && image_tool["status"] == "passed";
+        let template_rendering = self.template_rendering_diagnostic().await;
         Ok(json!({
-            "status":if tool_result["status"] == "passed" && vision_passed { "passed" } else if tool_result["status"] == "passed" { "partial" } else { "failed" },
-            "discovery":discovery,"toolCalling":tool_result,
-            "thinking":{"requested":self.config.thinking_mode,"observedInToolProbe":reasoning_observed,"status":match (self.config.thinking_mode.as_str(),reasoning_observed) {("off",Some(true))=>"mismatch",(_,Some(true))=>"observed",(_,Some(false))=>"not_observed",_=>"unknown"},"message":"A missing thought in one probe does not prove the backend disabled thinking; verify the actual template and runtime."},
+            "status":if tool_result["status"] == "passed" && vision_passed && template_rendering["status"] != "failed" { "passed" } else if tool_result["status"] == "passed" { "partial" } else { "failed" },
+            "discovery":discovery,"toolCalling":tool_result,"templateRendering":template_rendering,
+            "thinking":{"requested":self.config.thinking_mode,"observedInToolProbe":reasoning_observed,"status":match (self.config.thinking_mode.as_str(),reasoning_observed) {("off",Some(true))=>"observed_despite_off",(_,Some(true))=>"observed",(_,Some(false))=>"not_observed",_=>"unknown"},"message":"One probe does not prove the backend's effective thinking setting. Gemma 4 may occasionally emit thoughts even when off; verify the actual template and runtime."},
             "vision":{"status":if vision_passed { "passed" } else { "failed" },"tested":true,"imageInput":image_input,"imageToolResult":image_tool,"message":"Diagnostic tests verify shuffled color quadrants, not desktop-task accuracy."},
             "targetProfile":target_model_profile(),
-            "configuredCapabilities":{"modelFamily":self.config.resolved_family(),"familySource":if self.config.model_family == "auto" {"inferred_from_model_id"} else {"configured"},"backend":self.config.resolved_backend(),"thinkingMode":self.config.thinking_mode,"templateOwner":"inference_server","capabilitiesVerifiedByProfile":false},
+            "configuredCapabilities":{"modelFamily":self.config.resolved_family(),"familySource":self.config.family_source.as_deref().unwrap_or(if self.config.model_family == "auto" {"inferred_from_model_id"} else {"configured"}),"backend":self.config.resolved_backend(),"thinkingMode":self.config.thinking_mode,"templateOwner":"inference_server","capabilitiesVerifiedByProfile":false},
+            "sampling":{"temperature":self.config.temperature,"topP":self.config.top_p,"topK":self.config.top_k,"minP":self.config.min_p,"seed":self.config.seed,"scope":"requested_values_only; null means server default, effective settings not independently verified"},
             "exactModelArtifact":{"status":"unknown","message":"Repository profile is known; the endpoint's exact GGUF hash, embedded template, projector and runtime version have not been verified."},
             "transport":self.transport_diagnostics(),
             "elapsedMs":started.elapsed().as_millis() as u64
@@ -617,8 +805,34 @@ impl Provider {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        self.probe_image_input(seed).await?;
-        self.probe_image_tool(seed.wrapping_add(1)).await
+        self.probe_image_input_with_retry(seed).await.0?;
+        self.probe_image_tool_with_retry(seed.wrapping_add(2))
+            .await
+            .0?;
+        Ok(())
+    }
+
+    async fn probe_image_input_with_retry(&self, seed: u128) -> (Result<()>, usize) {
+        match self.probe_image_input(seed).await {
+            Err(first) if retryable_vision_result(&first) => (
+                self.probe_image_input(seed.wrapping_add(1))
+                    .await
+                    .context("Image input probe failed twice"),
+                2,
+            ),
+            result => (result, 1),
+        }
+    }
+    async fn probe_image_tool_with_retry(&self, seed: u128) -> (Result<()>, usize) {
+        match self.probe_image_tool(seed).await {
+            Err(first) if retryable_vision_result(&first) => (
+                self.probe_image_tool(seed.wrapping_add(1))
+                    .await
+                    .context("Image tool-result probe failed twice"),
+                2,
+            ),
+            result => (result, 1),
+        }
     }
 
     async fn probe_image_tool(&self, seed: u128) -> Result<()> {
@@ -733,6 +947,33 @@ impl Provider {
     }
 }
 
+fn assess_template_rendering(prompt: &str) -> Value {
+    let checks = json!({
+        "typeProperty":prompt.contains("HARNESS_TEMPLATE_TYPE_MARKER"),
+        "descriptionProperty":prompt.contains("HARNESS_TEMPLATE_DESCRIPTION_MARKER"),
+        "nestedTypeProperty":prompt.contains("HARNESS_TEMPLATE_NESTED_MARKER"),
+        "toolResult":prompt.contains("HARNESS_TEMPLATE_RESULT_MARKER"),
+    });
+    let passed = checks
+        .as_object()
+        .is_some_and(|map| map.values().all(|value| *value == true));
+    json!({"status":if passed {"passed"} else {"failed"},"tested":true,"checks":checks,"scope":"Synthetic template rendering only; not proof of model tool selection or execution."})
+}
+
+fn summarize_server_properties(props: &Value) -> Value {
+    let params = &props["default_generation_settings"]["params"];
+    let number = |key: &str| params.get(key).filter(|value| value.is_number()).cloned();
+    let template = props["chat_template"].as_str().map(|text| {
+        json!({"sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"byteLength":text.len()})
+    });
+    json!({
+        "status":"reported",
+        "defaultSampling":{"temperature":number("temperature"),"topP":number("top_p"),"topK":number("top_k"),"minP":number("min_p"),"seed":number("seed")},
+        "templateRepresentation":template,
+        "scope":"Server-reported defaults and template representation only; the server may normalize the template and per-request effective settings are not verified."
+    })
+}
+
 fn contains_image(value: &Value) -> bool {
     match value {
         Value::Array(parts) => parts.iter().any(contains_image),
@@ -744,6 +985,13 @@ fn contains_image(value: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+fn retryable_vision_result(error: &anyhow::Error) -> bool {
+    let description = format!("{error:#}");
+    description.contains("Vision probe did not return the requested JSON object")
+        || description.contains("Vision probe quadrant")
+        || description.contains("Image tool probe did not return the expected")
 }
 
 fn validate_probe_arguments(call: &ToolCall, nonce: &str) -> Result<()> {
@@ -1389,6 +1637,146 @@ mod tests {
         let input = response_input(&messages).unwrap();
         assert_eq!(input[0]["call_id"], "call_screen");
         assert_eq!(input[0]["output"][1]["type"], "input_image");
+    }
+
+    #[test]
+    fn gemma4_wire_projection_places_images_before_text_for_both_protocols() {
+        let input = json!([
+            {"type":"text","text":"describe both"},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,first"}},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,second"}}
+        ]);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: Some(input.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        }];
+        for protocol in ["chat_completions", "responses"] {
+            let provider = Provider::new(ConnectionConfig {
+                model: "gemma-4-E2B-it".into(),
+                protocol: protocol.into(),
+                ..Default::default()
+            })
+            .unwrap();
+            let body = provider.request_body(&messages, &[], 512).unwrap();
+            let parts = if protocol == "responses" {
+                &body["input"][0]["content"]
+            } else {
+                &body["messages"][0]["content"]
+            };
+            assert!(matches!(
+                parts[0]["type"].as_str(),
+                Some("input_image" | "image_url")
+            ));
+            assert!(matches!(
+                parts[1]["type"].as_str(),
+                Some("input_image" | "image_url")
+            ));
+            assert_eq!(parts[2]["text"], "describe both");
+        }
+        assert_eq!(messages[0].content, Some(input.clone()));
+        let interleaved = json!([
+            {"type":"text","text":"first image"},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,first"}},
+            {"type":"text","text":"second image"},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,second"}}
+        ]);
+        let labeled = vec![ChatMessage {
+            role: "user".into(),
+            content: Some(interleaved.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        }];
+        let provider = Provider::new(ConnectionConfig {
+            model: "gemma-4-E2B-it".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let body = provider.request_body(&labeled, &[], 512).unwrap();
+        assert_eq!(body["messages"][0]["content"], interleaved);
+        let responses = Provider::new(ConnectionConfig {
+            model: "gemma-4-E2B-it".into(),
+            protocol: "responses".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .request_body(&labeled, &[], 512)
+        .unwrap();
+        let parts = responses["input"][0]["content"].as_array().unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part["type"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["input_text", "input_image", "input_text", "input_image"]
+        );
+        assert_eq!(parts[0]["text"], "first image");
+        assert_eq!(parts[2]["text"], "second image");
+        let other = Provider::new(ConnectionConfig {
+            model: "gemma-3-4b-it".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .request_body(&messages, &[], 512)
+        .unwrap();
+        assert_eq!(other["messages"][0]["content"], input);
+    }
+
+    #[test]
+    fn sampling_is_explicit_validated_and_never_silently_dropped() {
+        let config = ConnectionConfig {
+            model: "gemma-4-26b-it".into(),
+            backend: "llama_cpp".into(),
+            temperature: Some(1.0),
+            top_p: Some(0.95),
+            top_k: Some(64),
+            min_p: Some(0.0),
+            seed: Some(42),
+            ..Default::default()
+        };
+        let body = Provider::new(config.clone())
+            .unwrap()
+            .request_body(&[], &[], 512)
+            .unwrap();
+        for (name, expected) in [
+            ("temperature", json!(1.0)),
+            ("top_p", json!(0.95)),
+            ("top_k", json!(64)),
+            ("min_p", json!(0.0)),
+            ("seed", json!(42)),
+        ] {
+            assert_eq!(body[name], expected);
+            assert!(unsupported_optional_parameter(
+                400,
+                &json!({"error":{"code":"unsupported_parameter","param":name}}),
+                &body
+            )
+            .is_none());
+        }
+        let defaults = Provider::new(ConnectionConfig {
+            model: "gemma-4-it".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .request_body(&[], &[], 512)
+        .unwrap();
+        for name in ["temperature", "top_p", "top_k", "min_p", "seed"] {
+            assert!(defaults.get(name).is_none());
+        }
+        let mut unsupported = config.clone();
+        unsupported.backend = "lmstudio".into();
+        assert!(Provider::new(unsupported).is_err());
+        let mut invalid = config.clone();
+        invalid.top_p = Some(0.0);
+        assert!(Provider::new(invalid).is_err());
+        let mut responses = config;
+        responses.protocol = "responses".into();
+        assert!(Provider::new(responses).is_err());
     }
 
     #[test]

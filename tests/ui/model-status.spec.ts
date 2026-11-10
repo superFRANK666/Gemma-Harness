@@ -81,3 +81,32 @@ test('long configured model identifiers fit inside the inspector', async ({ page
   await expect.poll(() => status.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('Gemma sampling baseline is explicit and survives saving', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.connections[0] = { ...config.connections[0], model: 'gemma-4-26b-it', protocol: 'chat_completions', backend: 'llama_cpp' };
+  await installDesktopFixture(page, { config });
+  await page.goto('/');
+  await page.locator('.model-info').getByRole('button', { name: '查看模型设置' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('采样参数 · 可选').click();
+  await dialog.getByRole('button', { name: '贪心采样对照' }).click();
+  await expect(dialog.getByLabel('Temperature')).toHaveValue('0');
+  await expect(dialog.getByLabel('Top P')).toHaveValue('1');
+  await expect(dialog.getByLabel('Top K')).toHaveValue('1');
+  await expect(dialog.getByLabel('Min P')).toHaveValue('0');
+  await dialog.getByRole('button', { name: '使用 Gemma 4 对照采样' }).click();
+  await expect(dialog.getByLabel('Temperature')).toHaveValue('1');
+  await expect(dialog.getByLabel('Top P')).toHaveValue('0.95');
+  await expect(dialog.getByLabel('Top K')).toHaveValue('64');
+  await expect(dialog.getByLabel('Min P')).toHaveValue('0');
+  await dialog.getByLabel('Seed').fill('42');
+  await dialog.getByRole('button', { name: '保存设置' }).click();
+  await page.locator('.model-info').getByRole('button', { name: '查看模型设置' }).click();
+  await dialog.getByText('采样参数 · 可选').click();
+  await expect(dialog.getByLabel('Seed')).toHaveValue('42');
+  await expect(dialog.getByLabel('Top K')).toHaveValue('64');
+  await dialog.getByLabel('推理后端').selectOption('lmstudio');
+  await expect(dialog.getByLabel('Top K')).toBeDisabled();
+  await expect(dialog.getByLabel('Top K')).toHaveValue('');
+});

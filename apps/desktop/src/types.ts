@@ -3,10 +3,11 @@ export interface Connection {
   id: string; name: string; baseUrl: string; protocol: string; model: string;
   contextLength: number; apiKey?: string; modelFamily?: string; backend?: string;
   thinkingMode?: 'auto' | 'on' | 'off'; maxOutputTokens?: number | null;
+  temperature?: number | null; topP?: number | null; topK?: number | null; minP?: number | null; seed?: number | null;
 }
 export interface Device { id: string; name: string; url: string; certificatePin: string; token?: string }
 export interface McpServer { id: string; name: string; command: string; args: string[]; enabled: boolean }
-export interface EngineConfiguration { binaryPath: string; modelPath: string; projectorPath: string; contextLength: number; port: number; gpuLayers: number }
+export interface EngineConfiguration { binaryPath: string; modelPath: string; projectorPath: string; chatTemplatePath?: string; contextLength: number; port: number; gpuLayers: number }
 export interface AppearanceConfig {
   theme: 'dark' | 'light' | 'system'; accent: 'sage' | 'blue' | 'violet' | 'amber';
   fontFamily: 'system' | 'sans' | 'serif'; fontSize: number;

@@ -1,0 +1,184 @@
+{
+  "date": "2026-11-10",
+  "runtime": "llama.cpp b12211 7d7f02875",
+  "model": "target IQ1_S and IQ2_XXS GGUF headers; same embedded-template SHA-256",
+  "scope": "Metadata-only sparse GGUF fixture; /apply-template rendering only, never used for model inference. User and tool schemas are synthetic. Template source patterns do not certify runtime compatibility.",
+  "templates": {
+    "embedded": {
+      "origin": "GGUF tokenizer.chat_template, IQ1_S header only",
+      "revision": "9cada68ea11a8f361e4b16a7a97e53d99b0918c0",
+      "sha256": "2dfbfc7d538912f4ea11d29d85b4e25d7bc26386e53f57529f1d707c28b5828c",
+      "bytes": 12045,
+      "rendered": {
+        "simple": {
+          "promptBytes": 379,
+          "sha256": "e577a81ea61a1fc7ccbccce61d3b5b0e51c9dd498c14e75b0df24d371ac1db59",
+          "hasTypePropertyDescription": false,
+          "hasDescriptionProperty": false,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": false
+        },
+        "declaration": {
+          "promptBytes": 541,
+          "sha256": "5247b7cba83349e25c976334c34f9b635e0ecaabca2fe2ecbf2520516a54ed36",
+          "hasTypePropertyDescription": false,
+          "hasDescriptionProperty": false,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": true
+        },
+        "roundtrip": {
+          "promptBytes": 761,
+          "sha256": "d301ab3cb75ddf7f1ff54406b96c35fa3d0be521f9c78d0da5b427f3a7f12fec",
+          "hasTypePropertyDescription": false,
+          "hasDescriptionProperty": false,
+          "hasResultMarker": true,
+          "hasMalformedNestedPunctuation": true
+        }
+      },
+      "harnessTemplateDiagnostic": {
+        "checks": {
+          "descriptionProperty": false,
+          "nestedTypeProperty": false,
+          "toolResult": true,
+          "typeProperty": false
+        },
+        "scope": "Synthetic template rendering only; not proof of model tool selection or execution.",
+        "serverReported": {
+          "defaultSampling": {
+            "minP": 0.05000000074505806,
+            "seed": 4294967295,
+            "temperature": 1.0,
+            "topK": 64,
+            "topP": 0.949999988079071
+          },
+          "scope": "Server-reported defaults and template representation only; the server may normalize the template and per-request effective settings are not verified.",
+          "status": "reported",
+          "templateRepresentation": {
+            "byteLength": 12044,
+            "sha256": "58c66fdee4afa29786fa0925a4c3659c8ebc28a2db93da6ae479d7d5886ce48f"
+          }
+        },
+        "status": "failed",
+        "tested": true
+      }
+    },
+    "heretic": {
+      "origin": "https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic/blob/f5970e2eee74ef654b7ee97722b3e67a7ec6adda/chat_template.jinja",
+      "revision": "f5970e2eee74ef654b7ee97722b3e67a7ec6adda",
+      "sha256": "0a52be69cda5ab8aeb627d6ff51a7b34c7d06afabb6b0f00cf8ee63df16a6315",
+      "bytes": 17344,
+      "rendered": {
+        "simple": {
+          "promptBytes": 379,
+          "sha256": "e577a81ea61a1fc7ccbccce61d3b5b0e51c9dd498c14e75b0df24d371ac1db59",
+          "hasTypePropertyDescription": false,
+          "hasDescriptionProperty": false,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": false
+        },
+        "declaration": {
+          "promptBytes": 722,
+          "sha256": "3796ea3fc69f9a0f7bfd53a52f480b66951536251455732df5e9f48c3c0ee619",
+          "hasTypePropertyDescription": true,
+          "hasDescriptionProperty": true,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": false
+        },
+        "roundtrip": {
+          "promptBytes": 926,
+          "sha256": "31745b159be44cf6b71c0134d6c06c5f243a05e299579e3141a962b71b8066fa",
+          "hasTypePropertyDescription": true,
+          "hasDescriptionProperty": true,
+          "hasResultMarker": true,
+          "hasMalformedNestedPunctuation": false
+        }
+      },
+      "harnessTemplateDiagnostic": {
+        "checks": {
+          "descriptionProperty": true,
+          "nestedTypeProperty": true,
+          "toolResult": true,
+          "typeProperty": true
+        },
+        "scope": "Synthetic template rendering only; not proof of model tool selection or execution.",
+        "serverReported": {
+          "defaultSampling": {
+            "minP": 0.05000000074505806,
+            "seed": 4294967295,
+            "temperature": 1.0,
+            "topK": 64,
+            "topP": 0.949999988079071
+          },
+          "scope": "Server-reported defaults and template representation only; the server may normalize the template and per-request effective settings are not verified.",
+          "status": "reported",
+          "templateRepresentation": {
+            "byteLength": 17344,
+            "sha256": "0a52be69cda5ab8aeb627d6ff51a7b34c7d06afabb6b0f00cf8ee63df16a6315"
+          }
+        },
+        "status": "passed",
+        "tested": true
+      }
+    },
+    "google": {
+      "origin": "https://huggingface.co/google/gemma-4-26B-A4B-it/blob/4d7ae4984b7db7de8f8457170b3f1a419ee76d52/chat_template.jinja",
+      "revision": "4d7ae4984b7db7de8f8457170b3f1a419ee76d52",
+      "sha256": "ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4",
+      "bytes": 18683,
+      "rendered": {
+        "simple": {
+          "promptBytes": 379,
+          "sha256": "e577a81ea61a1fc7ccbccce61d3b5b0e51c9dd498c14e75b0df24d371ac1db59",
+          "hasTypePropertyDescription": false,
+          "hasDescriptionProperty": false,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": false
+        },
+        "declaration": {
+          "promptBytes": 722,
+          "sha256": "3796ea3fc69f9a0f7bfd53a52f480b66951536251455732df5e9f48c3c0ee619",
+          "hasTypePropertyDescription": true,
+          "hasDescriptionProperty": true,
+          "hasResultMarker": false,
+          "hasMalformedNestedPunctuation": false
+        },
+        "roundtrip": {
+          "promptBytes": 926,
+          "sha256": "31745b159be44cf6b71c0134d6c06c5f243a05e299579e3141a962b71b8066fa",
+          "hasTypePropertyDescription": true,
+          "hasDescriptionProperty": true,
+          "hasResultMarker": true,
+          "hasMalformedNestedPunctuation": false
+        }
+      },
+      "harnessTemplateDiagnostic": {
+        "checks": {
+          "descriptionProperty": true,
+          "nestedTypeProperty": true,
+          "toolResult": true,
+          "typeProperty": true
+        },
+        "scope": "Synthetic template rendering only; not proof of model tool selection or execution.",
+        "serverReported": {
+          "defaultSampling": {
+            "minP": 0.05000000074505806,
+            "seed": 4294967295,
+            "temperature": 1.0,
+            "topK": 64,
+            "topP": 0.949999988079071
+          },
+          "scope": "Server-reported defaults and template representation only; the server may normalize the template and per-request effective settings are not verified.",
+          "status": "reported",
+          "templateRepresentation": {
+            "byteLength": 18682,
+            "sha256": "6a1015c47ccfcfa67c3b772385bccee357a4d37c3cda37bd202e9047f391ab82"
+          }
+        },
+        "status": "passed",
+        "tested": true
+      }
+    }
+  },
+  "finding": "Simple first-turn weather prompt hashes are identical for all three templates. The embedded template omits real properties named type and description and emits malformed nested punctuation in this fixture; the two newer templates preserve them. The tool result marker is rendered in all three for the tested roundtrip under this llama.cpp version. The independently inspected IQ2_XXS header has the same embedded-template SHA-256 as IQ1_S; full-file hashes remain a separate check.",
+  "isolation": "Each renderer owned the listening port by PID, and its server-reported template hash matched the corresponding source after llama.cpp whitespace normalization."
+}

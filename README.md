@@ -12,6 +12,17 @@
 - **电脑与浏览器操作**：通过浏览器和原生桌面工具观察界面、执行操作；可添加图片供具备视觉能力的模型使用。
 - **灵活连接**：连接 LM Studio、llama.cpp 或兼容的推理服务，也可运行本地 GGUF 模型；支持将任务发送到已配对的执行设备。
 - **本地工作区**：管理项目与会话，在本地保存历史，并调整主题、配色和字体。
+- **版本与更新**：在设置中查看当前版本、检查并安装已验证签名的更新。
+
+## 下载安装
+
+从 [GitHub 发布页面](https://github.com/superFRANK666/Gemma-Harness/releases)下载适合自己电脑的安装包：
+
+- **Mac**：Apple 芯片选择 `macOS-arm64.dmg`；Intel 芯片选择 `macOS-x64.dmg`，需要 macOS 14 或更高版本。
+- **Windows**：x64 电脑选择 `Windows-x64-setup.exe` 或 `Windows-x64.msi`。
+- **Linux**：x64 的 Debian／Ubuntu 选择 `.deb`；其他兼容系统可尝试 `.AppImage`。
+
+安装后可在「设置与连接 → 版本与控制」查看版本、检查更新。更新替换应用本身，模型文件、项目和聊天记录保留。安装包目前属于开发预发布版；macOS 包未经 Apple 公证，Windows 包未进行 Authenticode 签名。Windows、Linux 和 Intel Mac 的真实设备安装与更新仍需分别验收。
 
 ## Gemma 适配性
 

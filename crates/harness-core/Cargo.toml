@@ -14,7 +14,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 chrono = { version = "0.4", features = ["serde"] }
 jsonschema = { version = "0.33", default-features = false }
 sha2 = "0.10"

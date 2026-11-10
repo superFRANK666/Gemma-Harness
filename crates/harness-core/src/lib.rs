@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use store::{Session, Store};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
@@ -54,6 +57,7 @@ pub struct Harness {
     pub(crate) dir: PathBuf,
     pub(crate) active: Mutex<HashMap<String, CancellationToken>>,
     pub(crate) binding_gate: AsyncMutex<()>,
+    update_preparing: AtomicBool,
     pub(crate) endpoints: Mutex<HashMap<String, Arc<Semaphore>>>,
     executors: AsyncMutex<HashMap<String, Arc<Executor>>>,
     pub(crate) mcp: mcp::McpManager,
@@ -87,6 +91,7 @@ impl Harness {
             dir,
             active: Mutex::new(HashMap::new()),
             binding_gate: AsyncMutex::new(()),
+            update_preparing: AtomicBool::new(false),
             endpoints: Mutex::new(HashMap::new()),
             executors: AsyncMutex::new(HashMap::new()),
             mcp: Default::default(),
@@ -109,6 +114,9 @@ impl Harness {
         id: &str,
         cancel: CancellationToken,
     ) -> Result<OperationRegistration<'a>> {
+        if self.update_preparing.load(Ordering::SeqCst) {
+            bail!("应用正在准备更新，请稍后重试")
+        }
         let mut active = self.active.lock().unwrap();
         if active.contains_key(id) {
             bail!("操作 ID 已经运行")
@@ -121,6 +129,9 @@ impl Harness {
         })
     }
     fn require_idle(&self) -> Result<()> {
+        if self.update_preparing.load(Ordering::SeqCst) {
+            bail!("应用正在准备更新，请稍后重试")
+        }
         if !self.active.lock().unwrap().is_empty() {
             bail!("请先停止运行中的任务或终端命令，再切换或移除项目")
         }
@@ -146,15 +157,13 @@ impl Harness {
             return;
         }
         let config = self.config();
-        if let Some(architecture) =
-            config["modelProfiles"]["managed-llama"]["identity"]["architecture"].as_str()
-        {
-            let mut probe = connection.clone();
-            probe.model = architecture.into();
-            let family = probe.resolved_family();
-            if family != "unknown" {
-                connection.model_family = family.into();
-            }
+        let profile = &config["modelProfiles"]["managed-llama"];
+        if let Some(family) = managed_profile_family(profile) {
+            connection.model_family = family.into();
+            connection.family_source = Some("inferred_from_gguf_metadata".into());
+        } else if profile["identity"]["architecture"].is_string() {
+            // A model alias cannot resolve conflicting or incomplete metadata.
+            connection.family_source = Some("ambiguous_gguf_metadata".into());
         }
     }
     pub(crate) async fn executor(&self, workspace: &str) -> Result<Arc<Executor>> {
@@ -255,6 +264,67 @@ impl Harness {
         };
         self.release_desktop(&session.id).await;
         result
+    }
+
+    async fn restore_deleted_file(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        let session_id = required(request, "sessionId")?;
+        let call_id = required(request, "callId")?;
+        let binding = self.binding_gate.lock().await;
+        self.require_idle()?;
+        let session = self.store.session(session_id)?;
+        let events = self.store.events(session_id)?;
+        let result = events
+            .iter()
+            .rev()
+            .find_map(|event| {
+                let payload = &event["payload"];
+                (event["kind"] == "activity"
+                    && payload["type"] == "tool_completed"
+                    && payload["name"] == "file_delete"
+                    && payload["callId"] == call_id
+                    && payload["result"]["deleted"] == true)
+                    .then_some(&payload["result"])
+            })
+            .context("没有找到此会话中可恢复的删除记录")?;
+        let path = result["path"]
+            .as_str()
+            .context("删除记录缺少原文件路径")?
+            .to_owned();
+        let backup = result["backup_artifact"]
+            .as_str()
+            .context("删除记录缺少备份")?
+            .to_owned();
+        let sha256 = result["sha256"]
+            .as_str()
+            .context("删除记录缺少文件摘要")?
+            .to_owned();
+        let operation_id = format!("restore-{}", uuid::Uuid::new_v4());
+        let cancel = CancellationToken::new();
+        let _operation = self.register_operation(&operation_id, cancel.clone())?;
+        self.store.append(session_id, "activity", &json!({"type":"manual_file_restore_started","callId":call_id,"operationId":operation_id,"path":path}))?;
+        drop(binding);
+        let outcome = self
+            .execute_streamed(
+                &session,
+                &operation_id,
+                "file_restore",
+                json!({"path":path,"backup_artifact":backup,"expected_sha256":sha256}),
+                cancel,
+                None,
+            )
+            .await;
+        match outcome {
+            Ok(mut value) => {
+                if let Err(error) = self.store.append(session_id, "activity", &json!({"type":"manual_file_restore_completed","callId":call_id,"operationId":operation_id,"path":path,"result":value})) {
+                    value["historyWarning"] = json!(format!("文件已恢复，但无法保存恢复记录：{error}"));
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.store.append(session_id, "activity", &json!({"type":"manual_file_restore_failed","callId":call_id,"operationId":operation_id,"path":path,"message":format!("{error:#}")}));
+                Err(error)
+            }
+        }
     }
     pub(crate) async fn execute_streamed(
         &self,
@@ -627,6 +697,14 @@ impl Harness {
                     result["actualModelProfile"] =
                         self.config()["modelProfiles"][&connection_id].clone();
                     result["serverVersion"] = json!("unknown_unless_recorded_in_profile");
+                    if connection_id == "managed-llama" {
+                        result["managedRuntimeWarnings"] =
+                            if self.engine.status()?["running"] == true {
+                                self.engine.startup_warnings()
+                            } else {
+                                json!({"status":"not_running","source":"managed_engine_log"})
+                            };
+                    }
                     let mut config = self.config();
                     let current = config["connections"]
                         .as_array()
@@ -711,6 +789,7 @@ impl Harness {
                 Ok(json!({"ok":true}))
             }
             "execute_tool" => self.manual_tool(request.clone(), Arc::new(|_| {})).await,
+            "restore_deleted_file" => self.restore_deleted_file(&request).await,
             "capabilities" => {
                 let cfg = self.config();
                 if cfg["deviceId"].as_str().unwrap_or("local") == "local" {
@@ -777,8 +856,12 @@ impl Harness {
                     serde_json::from_value(request["config"].clone())?;
                 let mut profile =
                     self.record_model_profile(Path::new(&engine_config.model_path))?;
-                profile["runtime"] = json!({"pinnedInstallerVersion":"b12211","actualVersion":"unknown_until_probed","binaryPath":engine_config.binary_path,"loadedContextRequested":engine_config.context_length,"projectorPath":engine_config.projector_path});
-                let result = self.engine.start(&engine_config)?;
+                let mut result = self.engine.start(&engine_config)?;
+                if engine_config.chat_template_path.trim().is_empty() {
+                    result["chatTemplate"]["knownIssues"] =
+                        profile["identity"]["chatTemplate"]["knownIssues"].clone();
+                }
+                profile["runtime"] = json!({"pinnedInstallerVersion":"b12211","actualVersion":"unknown_until_probed","binaryPath":engine_config.binary_path,"loadedContextRequested":engine_config.context_length,"projectorPath":engine_config.projector_path,"chatTemplate":result["chatTemplate"]});
                 let mut config = self.config();
                 config["modelProfiles"]["managed-llama"] = profile;
                 config["engineConfig"] = request["config"].clone();
@@ -849,6 +932,10 @@ impl Harness {
                 Ok(json!({"ok":true}))
             }
             "host_start" => {
+                let _binding = self.binding_gate.lock().await;
+                if self.update_preparing.load(Ordering::SeqCst) {
+                    bail!("应用正在准备更新，请稍后重试")
+                }
                 let mut host = self.host.lock().await;
                 if host.is_some() {
                     bail!("执行设备服务已经运行")
@@ -917,6 +1004,29 @@ impl Harness {
             _ => bail!("未知操作 {action}"),
         }
     }
+    /// Refuse to interrupt work, then prevent new admissions while the app is
+    /// replaced. A failed installation can explicitly release this guard.
+    pub async fn prepare_app_update(&self) -> Result<()> {
+        let _binding = self.binding_gate.lock().await;
+        if self.update_preparing.load(Ordering::SeqCst) {
+            bail!("应用已在准备更新")
+        }
+        if !self.active.lock().unwrap().is_empty() {
+            bail!("请先停止当前任务或终端命令，再安装更新")
+        }
+        if self.host.lock().await.is_some() {
+            bail!("请先停止本机执行设备服务，再安装更新")
+        }
+        self.update_preparing.store(true, Ordering::SeqCst);
+        self.shutdown().await;
+        Ok(())
+    }
+
+    pub async fn cancel_app_update(&self) {
+        let _binding = self.binding_gate.lock().await;
+        self.update_preparing.store(false, Ordering::SeqCst);
+    }
+
     pub async fn shutdown(&self) {
         for cancel in self.active.lock().unwrap().values() {
             cancel.cancel();
@@ -930,6 +1040,52 @@ impl Harness {
             let _ = host.stop().await;
         }
         self.mcp.reset().await;
+    }
+}
+// Architecture identifies the network, not its instruction tuning. In particular,
+// FunctionGemma uses the Gemma 3 architecture and needs a different tool protocol.
+fn managed_profile_family(profile: &Value) -> Option<&'static str> {
+    let architecture = profile["identity"]["architecture"]
+        .as_str()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let identities = [
+        profile["identity"]["name"].as_str(),
+        profile["metadata"]["general.basename"].as_str(),
+        profile["metadata"]["general.finetune"].as_str(),
+        profile["file"]["fileName"].as_str(),
+    ];
+    let names: Vec<String> = identities
+        .into_iter()
+        .flatten()
+        .map(|s| {
+            s.to_ascii_lowercase()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect()
+        })
+        .collect();
+    let has = |part: &str| names.iter().any(|name| name.contains(part));
+    let has_gemma3 = names
+        .iter()
+        .any(|name| name.contains("gemma3") && !name.contains("gemma3n"));
+    let has_gemma3n = has("gemma3n");
+    let has_gemma4 = has("gemma4");
+    if has("functiongemma") {
+        return (matches!(architecture.as_str(), "" | "gemma3")
+            && !has_gemma3n
+            && !has_gemma4
+            && !has("codegemma"))
+        .then_some("functiongemma");
+    }
+    if has("codegemma") {
+        return None;
+    }
+    match architecture.as_str() {
+        "gemma4" if !has_gemma3 && !has_gemma3n => Some("gemma4"),
+        "gemma3n" if !has_gemma3 && !has_gemma4 => Some("gemma3n"),
+        "gemma3" if has_gemma3 && !has_gemma3n && !has_gemma4 => Some("gemma3"),
+        _ => None,
     }
 }
 fn same_connection(a: &Value, b: &Value) -> bool {
@@ -948,6 +1104,11 @@ fn same_connection(a: &Value, b: &Value) -> bool {
         && a.backend == b.backend
         && a.thinking_mode == b.thinking_mode
         && a.max_output_tokens == b.max_output_tokens
+        && a.temperature == b.temperature
+        && a.top_p == b.top_p
+        && a.top_k == b.top_k
+        && a.min_p == b.min_p
+        && a.seed == b.seed
 }
 fn required<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     v[k].as_str().with_context(|| format!("缺少 {k}"))
@@ -987,4 +1148,153 @@ fn without_binary(mut value: Value) -> Value {
     }
     walk(&mut value);
     value
+}
+
+#[cfg(test)]
+mod update_safety_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_does_not_interrupt_work_and_failed_install_can_release_admission() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let harness = Harness::open(dir.path().join("data"))?;
+        let token = CancellationToken::new();
+        let gate = harness.binding_gate.lock().await;
+        let operation = harness.register_operation("active-test", token.clone())?;
+        drop(gate);
+        assert!(harness.prepare_app_update().await.is_err());
+        assert!(!token.is_cancelled());
+        drop(operation);
+
+        harness.prepare_app_update().await?;
+        let gate = harness.binding_gate.lock().await;
+        assert!(harness
+            .register_operation("new-test", CancellationToken::new())
+            .is_err());
+        drop(gate);
+        assert!(harness
+            .command(json!({"action":"host_start"}))
+            .await
+            .is_err());
+        harness.cancel_app_update().await;
+        let gate = harness.binding_gate.lock().await;
+        let resumed = harness.register_operation("new-test", CancellationToken::new())?;
+        drop(gate);
+        drop(resumed);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_refuses_to_stop_a_running_remote_host() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir(&workspace)?;
+        let harness = Harness::open(dir.path().join("data"))?;
+        let host = RemoteHost::start(
+            "127.0.0.1:0".into(),
+            "wss://127.0.0.1:45455".into(),
+            dir.path().join("host"),
+            workspace,
+        )
+        .await?;
+        *harness.host.lock().await = Some(host);
+        assert!(harness.prepare_app_update().await.is_err());
+        let host = harness.host.lock().await.take().unwrap();
+        assert_eq!(host.status().await?["running"], true);
+        host.stop().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod model_family_tests {
+    use super::*;
+
+    #[test]
+    fn managed_functiongemma_is_not_confused_with_its_gemma3_architecture() {
+        let profile = json!({"identity":{"architecture":"gemma3","name":"FunctionGemma 270M IT"},"file":{"fileName":"model.gguf"}});
+        assert_eq!(managed_profile_family(&profile), Some("functiongemma"));
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma3"},"file":{"fileName":"functiongemma-270m-it-q8_0.gguf"}})
+            ),
+            Some("functiongemma")
+        );
+        assert_eq!(
+            managed_profile_family(&json!({"identity":{"architecture":"gemma3"}})),
+            None
+        );
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma3","name":"Gemma 3 4B IT"}})
+            ),
+            Some("gemma3")
+        );
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma4","name":"FunctionGemma"}})
+            ),
+            None
+        );
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma4","name":"Gemma 3 4B"}})
+            ),
+            None
+        );
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma3n","name":"Gemma 4 E2B"}})
+            ),
+            None
+        );
+        assert_eq!(
+            managed_profile_family(
+                &json!({"identity":{"architecture":"gemma","name":"CodeGemma 7B"}})
+            ),
+            None
+        );
+        assert_eq!(
+            managed_profile_family(&json!({"identity":{"architecture":"gemma4"}})),
+            Some("gemma4")
+        );
+        assert_eq!(
+            managed_profile_family(&json!({"identity":{"architecture":"gemma3n"}})),
+            Some("gemma3n")
+        );
+        assert_eq!(
+            ConnectionConfig {
+                model: "google/codegemma-7b-it".into(),
+                ..Default::default()
+            }
+            .resolved_family(),
+            "unknown"
+        );
+        assert_eq!(
+            ConnectionConfig {
+                model: "google/gemma-3n-E4B-it".into(),
+                ..Default::default()
+            }
+            .resolved_family(),
+            "gemma3n"
+        );
+        assert_eq!(
+            ConnectionConfig {
+                model: "gemma-4-alias".into(),
+                family_source: Some("ambiguous_gguf_metadata".into()),
+                ..Default::default()
+            }
+            .resolved_family(),
+            "unknown"
+        );
+        assert_eq!(
+            ConnectionConfig {
+                model: "functiongemma-gemma4".into(),
+                ..Default::default()
+            }
+            .resolved_family(),
+            "unknown"
+        );
+    }
 }

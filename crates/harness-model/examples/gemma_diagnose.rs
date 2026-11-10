@@ -11,6 +11,35 @@ async fn main() -> Result<()> {
         backend: std::env::var("HARNESS_EVAL_BACKEND").unwrap_or_else(|_| "auto".into()),
         model_family: std::env::var("HARNESS_EVAL_FAMILY").unwrap_or_else(|_| "auto".into()),
         thinking_mode: std::env::var("HARNESS_EVAL_THINKING").unwrap_or_else(|_| "auto".into()),
+        context_length: std::env::var("HARNESS_EVAL_CONTEXT")
+            .ok()
+            .map(|s| s.parse::<usize>())
+            .transpose()?
+            .unwrap_or(8192),
+        max_output_tokens: std::env::var("HARNESS_EVAL_MAX_OUTPUT")
+            .ok()
+            .map(|s| s.parse::<usize>())
+            .transpose()?,
+        temperature: std::env::var("HARNESS_EVAL_TEMPERATURE")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        top_p: std::env::var("HARNESS_EVAL_TOP_P")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        top_k: std::env::var("HARNESS_EVAL_TOP_K")
+            .ok()
+            .map(|s| s.parse::<u32>())
+            .transpose()?,
+        min_p: std::env::var("HARNESS_EVAL_MIN_P")
+            .ok()
+            .map(|s| s.parse::<f64>())
+            .transpose()?,
+        seed: std::env::var("HARNESS_EVAL_SEED")
+            .ok()
+            .map(|s| s.parse::<u32>())
+            .transpose()?,
         api_key: std::env::var("HARNESS_EVAL_API_KEY").ok(),
         ..Default::default()
     };

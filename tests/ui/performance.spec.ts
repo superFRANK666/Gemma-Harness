@@ -120,6 +120,23 @@ test('long history is loaded in windows and streaming does not pull a reader to 
   await finish(page);
 });
 
+test('model retry explanations remain visible after reopening a session', async ({ page }) => {
+  const history: Json[] = [
+    { kind: 'message', payload: { role: 'user', content: 'TEST_FIXTURE request' } },
+    { kind: 'activity', payload: { type: 'model_retry', reason: 'output_token_limit', previousOutputTokens: 2048, outputTokens: 4096 } },
+    { kind: 'activity', payload: { type: 'model_retry', reason: 'empty_final_after_tool' } },
+    { kind: 'activity', payload: { type: 'capability_warning', capability: 'tool_calling', message: 'TEST_FIXTURE tool diagnostic failed' } },
+    { kind: 'message', payload: { role: 'assistant', content: 'TEST_FIXTURE result' } },
+  ];
+  await performanceFixture(page, history);
+  await page.getByRole('button', { name: /设置与连接/ }).click(); await page.getByRole('button', { name: '保存设置', exact: true }).click();
+  await page.getByRole('button', { name: 'Long history TEST_FIXTURE', exact: true }).click();
+  await expect(page.getByText(/增加预算重试（2048 → 4096 token）/)).toBeVisible();
+  await expect(page.getByText(/本次重试不会再次执行工具/)).toBeVisible();
+  await expect(page.getByText('TEST_FIXTURE tool diagnostic failed', { exact: true })).toBeVisible();
+  await expect(page.getByText('TEST_FIXTURE result', { exact: true })).toBeVisible();
+});
+
 test('local and MCP uncertain results require observation while remote results offer status lookup', async ({ page }) => {
   await performanceFixture(page); await send(page);
   const events: Json[] = [];

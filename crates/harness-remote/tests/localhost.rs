@@ -7,6 +7,60 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
+async fn remote_file_delete_is_deduplicated_and_its_backup_can_be_restored() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let workspace = temporary.path().join("workspace");
+    std::fs::create_dir(&workspace)?;
+    std::fs::write(workspace.join("old.bin"), [0, 1, 2, 255])?;
+    let host = RemoteHost::start(
+        "127.0.0.1:0".into(),
+        "wss://127.0.0.1:0/".into(),
+        temporary.path().join("host"),
+        workspace.clone(),
+    )
+    .await?;
+    let device = RemoteClient::pair(&host.pairing_invitation().await?).await?;
+    let client = RemoteClient::new(device)?;
+    let inspected = client
+        .execute(
+            "inspect-file",
+            "file_stat",
+            json!({"path":"old.bin"}),
+            CancellationToken::new(),
+        )
+        .await?;
+    let args = json!({"path":"old.bin","read_token":inspected["read_token"]});
+    let first = client
+        .execute(
+            "delete-file",
+            "file_delete",
+            args.clone(),
+            CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(first["deleted"], true);
+    assert!(!workspace.join("old.bin").exists());
+    client.disconnect().await;
+    let replay = client
+        .execute("delete-file", "file_delete", args, CancellationToken::new())
+        .await?;
+    assert_eq!(first, replay);
+    let restored = client
+        .execute(
+            "restore-file",
+            "file_restore",
+            json!({"path":"old.bin",
+        "backup_artifact":first["backup_artifact"],"expected_sha256":first["sha256"]}),
+            CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(restored["restored"], true);
+    assert_eq!(std::fs::read(workspace.join("old.bin"))?, [0, 1, 2, 255]);
+    host.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn remote_command_output_arrives_before_exit_survives_reconnect_and_can_cancel() -> Result<()>
 {
     let temporary = tempfile::tempdir()?;

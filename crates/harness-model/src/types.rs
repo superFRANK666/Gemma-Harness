@@ -12,9 +12,19 @@ pub struct ConnectionConfig {
     pub context_length: usize,
     /// `auto` is an inference from the name, not certification of the weights.
     pub model_family: String,
+    /// Runtime provenance of an automatically resolved family, never persisted.
+    #[serde(skip)]
+    pub family_source: Option<String>,
     pub backend: String,
     pub thinking_mode: String,
     pub max_output_tokens: Option<usize>,
+    /// None means the server default; these are requested values, not proof of
+    /// what an opaque or nonconforming inference server actually applied.
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u32>,
+    pub min_p: Option<f64>,
+    pub seed: Option<u32>,
     /// Never included in connection debug output or diagnostics.
     #[serde(skip_serializing)]
     pub api_key: Option<String>,
@@ -30,9 +40,15 @@ impl std::fmt::Debug for ConnectionConfig {
             .field("model", &self.model)
             .field("context_length", &self.context_length)
             .field("model_family", &self.model_family)
+            .field("family_source", &self.family_source)
             .field("backend", &self.backend)
             .field("thinking_mode", &self.thinking_mode)
             .field("max_output_tokens", &self.max_output_tokens)
+            .field("temperature", &self.temperature)
+            .field("top_p", &self.top_p)
+            .field("top_k", &self.top_k)
+            .field("min_p", &self.min_p)
+            .field("seed", &self.seed)
             .field("api_key", &self.api_key.as_ref().map(|_| "[redacted]"))
             .finish()
     }
@@ -48,9 +64,15 @@ impl Default for ConnectionConfig {
             model: String::new(),
             context_length: 8192,
             model_family: "auto".into(),
+            family_source: None,
             backend: "auto".into(),
             thinking_mode: "auto".into(),
             max_output_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            min_p: None,
+            seed: None,
             api_key: None,
         }
     }
@@ -62,10 +84,14 @@ impl ConnectionConfig {
             return match self.model_family.as_str() {
                 "gemma4" => "gemma4",
                 "gemma3" => "gemma3",
+                "gemma3n" => "gemma3n",
                 "functiongemma" => "functiongemma",
                 "other" => "other",
                 _ => "unknown",
             };
+        }
+        if self.family_source.as_deref() == Some("ambiguous_gguf_metadata") {
+            return "unknown";
         }
         let name: String = self
             .model
@@ -73,11 +99,20 @@ impl ConnectionConfig {
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
-        if name.contains("functiongemma") {
+        let function = name.contains("functiongemma");
+        let code = name.contains("codegemma");
+        let gemma4 = name.contains("gemma4");
+        let gemma3n = name.contains("gemma3n");
+        let gemma3 = name.contains("gemma3") && !gemma3n;
+        if code || (function && (gemma4 || gemma3n)) || (gemma4 && (gemma3 || gemma3n)) {
+            "unknown"
+        } else if function {
             "functiongemma"
-        } else if name.contains("gemma4") {
+        } else if gemma4 {
             "gemma4"
-        } else if name.contains("gemma3") || name.contains("codegemma") {
+        } else if gemma3n {
+            "gemma3n"
+        } else if gemma3 {
             "gemma3"
         } else {
             "unknown"
