@@ -122,7 +122,7 @@ test('appearance saves during an active response without clearing the conversati
   const dialog = await openAppearance(page); await dialog.getByRole('button', { name: '浅色', exact: true }).click(); await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.locator('.message.user')).toContainText('TEST_FIXTURE running task'); await expect(page.locator('.message.assistant')).toContainText('TEST_FIXTURE live response remains visible');
   await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible(); expect(await actionCalls(page, 'save_settings')).toHaveLength(0);
-  await page.getByRole('button', { name: '停止', exact: true }).click(); await expect(page.locator('.composer-footnote')).toContainText('已停止');
+  await page.getByRole('button', { name: '停止', exact: true }).click(); await expect(page.locator('.composer-status')).toContainText('已停止');
 });
 
 test('background session refresh does not override an unsaved appearance preview', async ({ page }) => {
@@ -136,7 +136,7 @@ test('background session refresh does not override an unsaved appearance preview
     const target = window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } };
     await target.__TAURI_INTERNALS__.invoke('command', { request: { action: 'interrupt', sessionId: 'appearance-session' } });
   });
-  await expect(page.locator('.composer-footnote')).toContainText('已停止');
+  await expect(page.locator('.composer-status')).toContainText('已停止');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

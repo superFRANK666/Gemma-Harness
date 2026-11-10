@@ -62,18 +62,38 @@ test('measured performance and context fields are visible and reset for a new ch
 
 test('queue cancellation stays responsive and missing usage never invents throughput', async ({ page }) => {
   await performanceFixture(page); await send(page); await emit(page, [{ type: 'inference_queued', endpoint: 'TEST_FIXTURE' }]);
-  await expect(page.locator('.composer-footnote')).toContainText('排队等待推理资源');
-  await expect(page.locator('.composer-footnote')).toContainText('已等待');
+  await expect(page.locator('.composer-status')).toContainText('排队等待推理资源');
+  await expect(page.locator('.composer-status')).toContainText('已等待');
   await page.getByRole('button', { name: '停止', exact: true }).click();
-  await expect(page.locator('.composer-footnote')).toContainText('已停止');
+  await expect(page.locator('.composer-status')).toContainText('已停止');
   await send(page); await emit(page, [{ type: 'inference_queued' }, { type: 'inference_acquired', waitMs: 42 }]);
-  await expect(page.locator('.composer-footnote')).toContainText('准备模型响应');
-  await expect(page.locator('.composer-footnote')).not.toContainText('已等待');
+  await expect(page.locator('.composer-status')).toContainText('准备模型响应');
+  await expect(page.locator('.composer-status')).not.toContainText('已等待');
   await emit(page, [{ type: 'text_delta', text: 'TEST_FIXTURE no usage' }, { type: 'model_metrics', durationMs: 1000, firstEventMs: 100, tokensPerSecond: 999, usageMeasured: false, succeeded: true }]); await finish(page);
   await page.getByRole('button', { name: '推理性能与上下文', exact: true }).click();
   await expect(metric(page, '请求吞吐')).toContainText('—');
   await expect(page.getByRole('region', { name: '推理性能与上下文', exact: true })).toContainText('后端未返回真实用量');
   await expect(metric(page, '请求吞吐')).not.toContainText('999');
+});
+
+test('queue status and stop control fit in the smallest window with large text', async ({ page }) => {
+  await page.setViewportSize({ width: 1050, height: 680 });
+  await performanceFixture(page);
+  await page.getByRole('button', { name: /设置与连接/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: '外观', exact: true }).click();
+  await dialog.getByLabel('界面字号', { exact: true }).selectOption('18');
+  await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
+  await send(page);
+  await emit(page, [{ type: 'inference_queued' }]);
+  const composer = (await page.locator('.composer').boundingBox())!;
+  const actions = (await page.locator('.composer-actions').boundingBox())!;
+  const status = (await page.locator('.composer-status').boundingBox())!;
+  const stop = (await page.getByRole('button', { name: '停止', exact: true }).boundingBox())!;
+  expect(actions.x + actions.width).toBeLessThanOrEqual(status.x);
+  expect(status.x + status.width).toBeLessThanOrEqual(stop.x);
+  expect(stop.x + stop.width).toBeLessThanOrEqual(composer.x + composer.width);
+  await page.getByRole('button', { name: '停止', exact: true }).click();
 });
 
 test('long history is loaded in windows and streaming does not pull a reader to the bottom', async ({ page }) => {

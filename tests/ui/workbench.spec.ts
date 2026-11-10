@@ -6,13 +6,25 @@ test('browser preview shows an honest disconnected empty state', async ({ page }
   await expect(page.getByText('桌面界面预览', { exact: false })).toBeVisible();
   await expect(page.getByText('模型未配置', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
-  await expect(page.locator('.composer-footnote')).toContainText('就绪');
+  await expect(page.locator('.brand')).toHaveText('harness');
+  await expect(page.locator('.project-item')).toHaveCount(0);
+  await expect(page.locator('.session-list')).toBeEmpty();
+  await expect(page.locator('.composer-area')).not.toContainText(/就绪|Enter|换行/);
+  await expect(page.locator('.composer-status')).toHaveText('编程与电脑操作');
   await screenshot(page, 'workbench');
   await page.getByRole('textbox', { name: '消息', exact: true }).fill('这是一条预览测试消息');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('当前为界面预览');
-  await expect(page.locator('.composer-footnote')).not.toContainText('已完成');
+  await expect(page.locator('.composer-status')).not.toContainText('已完成');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+});
+
+test('empty desktop project and session lists have no placeholder text', async ({ page }) => {
+  await installDesktopFixture(page, { projects: [] });
+  await page.goto('/');
+  await expect(page.getByLabel('项目列表')).toBeEmpty();
+  await expect(page.locator('.session-list')).toBeEmpty();
+  await expect(page.getByRole('button', { name: '打开项目' })).toBeVisible();
 });
 
 test('all settings tabs render in browser preview without claiming backend success', async ({ page }) => {
@@ -143,9 +155,9 @@ test('Tauri Channel failure events do not turn into a completed task', async ({ 
   await expect(page.getByRole('textbox', { name: '消息', exact: true })).toHaveAttribute('placeholder', /Harness/);
   await page.getByRole('textbox', { name: '消息', exact: true }).fill('运行一个连接测试');
   await page.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(page.locator('.composer-footnote')).toContainText('执行失败');
+  await expect(page.locator('.composer-status')).toContainText('执行失败');
   await expect(page.getByRole('alert')).toContainText('TEST_FIXTURE: backend unavailable');
-  await expect(page.locator('.composer-footnote')).not.toContainText('已完成');
+  await expect(page.locator('.composer-status')).not.toContainText('已完成');
   expect((await ipcCalls(page)).filter(call => call.cmd === 'stream_turn')).toHaveLength(1);
 });
 
@@ -164,6 +176,22 @@ test('image attachment and exact user whitespace reach the desktop stream', asyn
   const request = (await ipcCalls(page)).find(call => call.cmd === 'stream_turn')!;
   expect(request.args.input).toBe('  compare this\n');
   expect((request.args.images as string[])[0]).toMatch(/^data:image\/png;base64,/);
+});
+
+test('message shortcuts still insert a newline and send', async ({ page }) => {
+  const config = structuredClone(baseConfig);
+  config.workspace = '/tmp/keyboard-fixture';
+  config.connections[0].model = 'gemma-fixture';
+  await installDesktopFixture(page, { config, streamEvents: [{ type: 'turn_completed', status: 'completed' }] });
+  await page.goto('/');
+  const input = page.getByRole('textbox', { name: '消息', exact: true });
+  await input.fill('第一行');
+  await input.press('Shift+Enter');
+  await input.pressSequentially('第二行');
+  await expect(input).toHaveValue('第一行\n第二行');
+  await input.press('Enter');
+  await expect.poll(async () => (await ipcCalls(page)).filter(call => call.cmd === 'stream_turn').length).toBe(1);
+  expect((await ipcCalls(page)).find(call => call.cmd === 'stream_turn')?.args.input).toBe('第一行\n第二行');
 });
 
 test('Gemma profile and thinking settings are saved together', async ({ page }) => {

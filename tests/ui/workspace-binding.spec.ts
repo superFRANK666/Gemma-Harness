@@ -133,7 +133,7 @@ test('clearing a workspace removes its dirty editor before a different workspace
   await changeBinding(page, '');
   await expect(page.getByRole('textbox', { name: '文件编辑器', exact: true })).toHaveCount(0);
   await expect(page.locator('.file-editor').getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
-  await expect(page.locator('.project-item')).toContainText('未选择项目');
+  await expect(page.locator('.project-item')).toHaveCount(0);
   expect(await writes(page)).toEqual([]);
 
   await changeBinding(page, workspaceB);

@@ -25,7 +25,7 @@ export function ProjectList({ projects, workspace, deviceId, disabled, onOpen, o
       <button role="menuitem" onClick={() => { setMenu(null); onManage(project, 'rename'); }}><Pencil size={13} />重命名</button>
       <button role="menuitem" disabled={disabled} onClick={() => { setMenu(null); onManage(project, 'remove'); }}><Trash2 size={13} />移除项目</button>
     </div>}
-  </div>)}{projects.length === 0 && <p className="no-projects">尚未添加项目<br />点击 + 打开项目文件夹</p>}</div>;
+  </div>)}</div>;
 }
 
 export function ProjectDialog({ project, action, onClose, onConfirm }: {

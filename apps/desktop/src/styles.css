@@ -101,7 +101,6 @@ textarea{resize:none}
 .sidebar{width:238px;min-width:238px;background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:0 14px}
 .traffic-space{height:37px;flex-shrink:0}
 .brand{display:flex;align-items:center;gap:11px;padding:10px 10px 30px;font-size:calc(24px * var(--ui-font-scale));letter-spacing:-.9px;font-weight:610}
-.brand .version{font-size:calc(9px * var(--ui-font-scale));font-weight:500;color:var(--text-secondary);letter-spacing:0;border:1px solid var(--line-strong);border-radius:4px;padding:2px 4px;margin-top:5px}
 .brand-mark{width:39px;height:39px;display:inline-flex;justify-content:space-between;align-items:center;position:relative;color:var(--accent);flex-shrink:0}
 .brand-mark i{display:block;background:currentColor;border-radius:1.5px;width:6px;height:34px;transform:skewY(-16deg)}
 .brand-mark i:nth-child(2){height:6px;width:23px;position:absolute;left:8px;top:17px;transform:skewY(-16deg)}
@@ -127,7 +126,6 @@ textarea{resize:none}
 .workspace-path{font-size:calc(9px * var(--ui-font-scale));color:var(--faint);margin:4px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sessions-heading{margin-top:32px}
 .session-list{flex:1;overflow:auto}
-.no-sessions{font-size:calc(11px * var(--ui-font-scale));line-height:1.85;color:var(--faint);margin:13px 10px}
 .session-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border-radius:6px;padding:10px;font-size:calc(11px * var(--ui-font-scale));color:var(--text-secondary)}
 .session-item>span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-item svg:first-child{color:var(--faint)}
@@ -195,9 +193,6 @@ textarea{resize:none}
 .send-button:hover{background:var(--accent);color:var(--on-accent)}
 .send-button:disabled{opacity:1;background:var(--accent-dark);color:var(--muted)}
 .send-button.stop{background:var(--accent-muted)}
-.composer-footnote{display:flex;justify-content:space-between;align-items:center;padding:9px 2px 0;font-size:calc(8px * var(--ui-font-scale));color:var(--faint)}
-.composer-footnote>span{display:flex;align-items:center;gap:5px}
-.composer-footnote i{font-style:normal;padding:0 3px;color:var(--faint)}
 .inspector{width:292px;min-width:292px;border-left:1px solid var(--line);background:var(--surface-low);display:flex;flex-direction:column}
 .inspector-tabs{display:flex;gap:21px;border-bottom:1px solid var(--line);height:49px;padding:0 18px;flex-shrink:0}
 .inspector-tabs button{display:flex;align-items:center;gap:6px;font-size:calc(10px * var(--ui-font-scale));color:var(--muted);position:relative;padding:0 1px}
@@ -390,7 +385,7 @@ to{opacity:1;translate:0 0}
 .composer-area{padding-left:24px;padding-right:24px}
 .starter-card{padding:15px 12px}
 .starter-card small{font-size:calc(8px * var(--ui-font-scale))}
-.composer-meta>span{display:none}
+.composer-meta>.composer-status.is-idle{display:none}
 .messages{padding-left:25px;padding-right:25px}
 }
 
