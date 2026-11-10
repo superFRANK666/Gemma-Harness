@@ -1,0 +1,30 @@
+{
+  "version": "0.3.1",
+  "notes": "包含应用界面更新与签名验证的应用内更新。",
+  "platforms": {
+    "darwin-aarch64-app": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-macOS-arm64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYWMrcllNV3hGWWxSenRmZFpKYnMwTXg1SmI2dmhKOUN5My9odTI0NnBQR1VHWFhKd1dNd1F5YVhIOXRFZGJyTDFCdDA0WHg0N1ltWVhkeElrd0RUSFEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg0NTEyCWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtbWFjT1MtYXJtNjQuYXBwLnRhci5negl2ZXJzaW9uOjAuMy4xCmhMenIwa3A0RExBeU9xTG53VVIyWWZaMXNCY3VoTS9oejlBalNZUjh2K2FrSVE5ZmpLUW5NUlJVL1l1NlFQNzI3Zm5RbFVvYWhOL3ZCQVVhaFRMeURnPT0K"
+    },
+    "darwin-x86_64-app": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-macOS-x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYVcrZ1k4a0UwalZtU1MvWkRuTW9VTkpicHNxQWZ6SHRPV1E3SHk2RkEwak9yQzhjZVlrNlYzZEFZbVlkUEJjTzQzZDNXVnRCbmdsVzh5SFJpZUVqUVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg1MzA5CWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtbWFjT1MteDY0LmFwcC50YXIuZ3oJdmVyc2lvbjowLjMuMQppWjRReDFOd2RWclZNZUg3UUVnZXA0TjBHcVJMbFZOdUQ0ZmFJbVE0K3JCR0xvS0xGbUppbmpVcnRMaUJ0aFBQc1hmU3pxRGFwMkV4V3pZZkdESHdDdz09Cg=="
+    },
+    "windows-x86_64-nsis": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-Windows-x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYWFzb05OQVByMlJNMUZBTlpnUkRNUE1CVE5ST3E0RUJyU2hoeW5MUGxXRThmMHgxODVyVUdtd2FmUnkvNWxXK1ZuaDYyMjNzcW04aHp1MmtIanJONEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg0ODY2CWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtV2luZG93cy14NjQtc2V0dXAuZXhlCXZlcnNpb246MC4zLjEKaVU5eUNLR2h6dXFBSDMzNStSQ1ZzaTNoRXIrTW5SNHprblNYa3JSU2xxenpWY1JVUWF5K3NaMWNnM21hOW9BSjZtdGt6aVpVeXVWUzJudEVSQTdFQVE9PQo="
+    },
+    "windows-x86_64-msi": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-Windows-x64.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYVNja0hrQlI3UjlwS2kweXpBVGZsQjBUTmZlM2NqcU40RnNQNHMrWnR4NzBMZnBXWWhDcGdsMVR2TFE3LzF3RXA1WEhNeGQrM0NqY0NBQ2tSTE9xWEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg0ODY2CWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtV2luZG93cy14NjQubXNpCXZlcnNpb246MC4zLjEKeW5LOUJwbGdYN204c2VSMUx1VXRGYTRvUmtSbEdpOGZscitwbjU5WnNCZTgycEZuaTZPRi9YdUUxbE96eXRHbENnQlFaTWtSeXRUTU9XNEpDU0pFQUE9PQo="
+    },
+    "linux-x86_64-deb": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-Linux-x64.deb",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYVJJMkJQbE9vQzh0QUhFbG5ncDhoTHN6OXkrS0dWTTBKT1YvbjdUWVk0dU1XenZqMWVyYmczNXFMbEpVUHRhOVpLaEtkcVVIajdDYmtUcGhFdytKMGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg0NjIyCWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtTGludXgteDY0LmRlYgl2ZXJzaW9uOjAuMy4xCnlCalVNSkZlOWRURzZFaTlHREhpU3B6WWg1TUM1OTVYejFzUnRkSEV2YlJMT3RDTHBJWVJ6eWhVNVBJdTJVYmR5T1dmMnNSVGZSelpYdGtLWlBJYUN3PT0K"
+    },
+    "linux-x86_64-appimage": {
+      "url": "https://github.com/superFRANK666/Gemma-Harness/releases/download/v0.3.1/Gemma-Harness-v0.3.1-Linux-x64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZm91c3BvRFZJYWQzNXNlZ1pTSzd4U252dEdtcDNFcDVha2Yza0FQdFhtcWVlWktNVXlYY29Ja3JKSEo3ZmhYcll5OEpLaHBrQ0xiSVZLMEVacjZWSzZjR21tQWl2OGdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mjg0NjIyCWZpbGU6R2VtbWEtSGFybmVzcy12MC4zLjEtTGludXgteDY0LkFwcEltYWdlCXZlcnNpb246MC4zLjEKaGRRa0NpOXBRUUtjQkNnc0lYeTgrRmNPWlhWMGdPaGphbzVSeWVTdk4yR1hHK1lqNWxwZisvc0phcUl4Z2JNNS80RnRUd0Z3YWJKbEUwc3VGRm9CQVE9PQo="
+    }
+  }
+}
