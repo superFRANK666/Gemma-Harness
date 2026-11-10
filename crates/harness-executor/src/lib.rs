@@ -443,7 +443,6 @@ impl Executor {
 
     fn file_read_chunk(&self, args: &Value, cancel: &CancellationToken) -> Result<Value> {
         use base64::Engine as _;
-        use std::io::{Read, Seek, SeekFrom};
         let path = self.resolve(string(args, "path")?)?;
         if !path.is_file() {
             bail!("Expected a regular file inside the workspace");
@@ -454,7 +453,8 @@ impl Executor {
         if !matches!(encoding, "utf8" | "base64") {
             bail!("encoding must be utf8 or base64");
         }
-        let (token, version) = if let Some(token) = args.get("read_token") {
+        let before = FileStamp::from_path(&path)?;
+        let previous = if let Some(token) = args.get("read_token") {
             let token = token
                 .as_str()
                 .context("read_token must be a string")?
@@ -467,46 +467,41 @@ impl Executor {
                 .get(&token)
                 .cloned()
                 .context("Unknown or expired read_token; start again")?;
-            if version.path != path || FileStamp::from_path(&path)? != version.stamp {
+            if version.path != path || before != version.stamp {
                 bail!("File changed or read_token belongs to another file; start again");
             }
-            (token, version)
+            Some((token, version))
         } else {
-            let before = FileStamp::from_path(&path)?;
-            let (sha256, bytes) = hash_file(&path, cancel)?;
-            if FileStamp::from_path(&path)? != before || bytes != before.length {
-                bail!("File changed during inspection; start again");
-            }
-            let token = self.remember_version(&path, &sha256)?;
-            let version = self
-                .read_versions
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Read version registry unavailable"))?
-                .entries
-                .get(&token)
-                .cloned()
-                .context("Read version disappeared")?;
-            if version.stamp != before {
-                bail!("File changed during inspection; start again");
-            }
-            (token, version)
+            None
         };
-        if offset > version.stamp.length {
+        if offset > before.length {
             bail!("Offset exceeds file length");
         }
-        if cancel.is_cancelled() {
-            bail!("Operation cancelled");
+        // Hash and capture the requested bytes in the same pass. Metadata such
+        // as modification time can have coarse precision or be restored, so it
+        // cannot prove that successive chunks belong to the same contents.
+        let (sha256, total, mut bytes) =
+            hash_file_with_range(&path, cancel, Some((offset, limit)))?;
+        if total != before.length || FileStamp::from_path(&path)? != before {
+            bail!("File changed during the read; start again");
         }
-        let mut file = open_regular_file(&path)?;
-        file.seek(SeekFrom::Start(offset))?;
-        let mut bytes = Vec::new();
-        file.take(limit).read_to_end(&mut bytes)?;
+        let token = if let Some((token, version)) = previous {
+            if version.sha256 != sha256 {
+                bail!("File changed since the previous chunk; start again");
+            }
+            token
+        } else {
+            self.remember_version(&path, &sha256)?
+        };
+        if FileStamp::from_path(&path)? != before {
+            bail!("File changed during the read; start again");
+        }
         let content = if encoding == "base64" {
             base64::engine::general_purpose::STANDARD.encode(&bytes)
         } else {
             let valid = match std::str::from_utf8(&bytes) {
                 Ok(_) => bytes.len(),
-                Err(error) if error.error_len().is_none() && offset + (bytes.len() as u64) < version.stamp.length => error.valid_up_to(),
+                Err(error) if error.error_len().is_none() && offset + (bytes.len() as u64) < before.length => error.valid_up_to(),
                 Err(_) => bail!("File range is not valid UTF-8 or offset is inside a character; use base64 for binary files"),
             };
             if valid == 0 && !bytes.is_empty() {
@@ -515,14 +510,11 @@ impl Executor {
             bytes.truncate(valid);
             std::str::from_utf8(&bytes)?.to_owned()
         };
-        if FileStamp::from_path(&path)? != version.stamp {
-            bail!("File changed during the read; start again");
-        }
         let next = offset + bytes.len() as u64;
         Ok(
             json!({"path":path.strip_prefix(&self.workspace)?,"encoding":encoding,"content":content,"offset":offset,
-                  "next_offset":next,"has_more":next < version.stamp.length,"file_bytes":version.stamp.length,
-                  "bytes":bytes.len(),"sha256":version.sha256,"read_token":token,
+                  "next_offset":next,"has_more":next < before.length,"file_bytes":before.length,
+                  "bytes":bytes.len(),"sha256":sha256,"read_token":token,
                   "instruction":"Offsets are bytes. Continue with next_offset and the same read_token."}),
         )
     }
@@ -1541,10 +1533,20 @@ fn open_regular_file(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 fn hash_file(path: &Path, cancel: &CancellationToken) -> Result<(String, u64)> {
+    let (sha256, bytes, _) = hash_file_with_range(path, cancel, None)?;
+    Ok((sha256, bytes))
+}
+
+fn hash_file_with_range(
+    path: &Path,
+    cancel: &CancellationToken,
+    range: Option<(u64, u64)>,
+) -> Result<(String, u64, Vec<u8>)> {
     use std::io::Read;
     let mut file = open_regular_file(path)?;
     let mut digest = Sha256::new();
     let mut bytes = 0u64;
+    let mut captured = Vec::new();
     let mut buffer = [0u8; 128 * 1024];
     loop {
         if cancel.is_cancelled() {
@@ -1555,9 +1557,18 @@ fn hash_file(path: &Path, cancel: &CancellationToken) -> Result<(String, u64)> {
             break;
         }
         digest.update(&buffer[..count]);
-        bytes = bytes.saturating_add(count as u64);
+        let end = bytes.saturating_add(count as u64);
+        if let Some((offset, limit)) = range {
+            let start = bytes.max(offset);
+            let stop = end.min(offset.saturating_add(limit));
+            if start < stop {
+                captured
+                    .extend_from_slice(&buffer[(start - bytes) as usize..(stop - bytes) as usize]);
+            }
+        }
+        bytes = end;
     }
-    Ok((format!("{:x}", digest.finalize()), bytes))
+    Ok((format!("{:x}", digest.finalize()), bytes, captured))
 }
 fn read_small(path: &Path) -> Result<Vec<u8>> {
     read_bounded_file(path, FILE_LIMIT).context("Use file_read_chunk for larger files")
@@ -2020,11 +2031,25 @@ mod tests {
         );
         assert_eq!(assembled, binary);
         assert_eq!(tail["has_more"], false);
-        std::fs::write(workspace.path().join("binary.bin"), b"changed").unwrap();
+        let binary_path = workspace.path().join("binary.bin");
+        let original_stamp = FileStamp::from_path(&binary_path).unwrap();
+        let mut changed = binary;
+        changed[6] = 0;
+        std::fs::write(&binary_path, changed).unwrap();
+        // Force the same metadata even on filesystems with high-resolution
+        // clocks. The requested first chunk is unchanged, but the file is not.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&binary_path)
+            .unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(original_stamp.modified.unwrap()))
+            .unwrap();
+        drop(file);
+        assert_eq!(FileStamp::from_path(&binary_path).unwrap(), original_stamp);
         assert!(executor
             .execute(
                 "file_read_chunk",
-                json!({"path":"binary.bin","read_token":part["read_token"]}),
+                json!({"path":"binary.bin","encoding":"base64","offset":0,"limit":4,"read_token":part["read_token"]}),
                 cancel
             )
             .await
