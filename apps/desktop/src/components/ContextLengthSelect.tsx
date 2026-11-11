@@ -80,6 +80,6 @@ export default function ContextLengthSelect({ value, disabled, onChange }: { val
           <span>{formatLength(option)}</span>{option === value && <Check size={14} />}
         </div>)}
       </div>
-    </div>, document.body)}
+    </div>, triggerRef.current?.closest('[role="dialog"]') || document.body)}
   </>;
 }
