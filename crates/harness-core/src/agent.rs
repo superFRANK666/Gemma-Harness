@@ -968,6 +968,7 @@ impl Harness {
                     let mut stable_result = result.clone();
                     if let Some(object) = stable_result.as_object_mut() {
                         object.remove("read_token");
+                        object.remove("evidence_call_id");
                     }
                     let observation = stable_result.to_string();
                     let count = match &last_observation {
@@ -1069,14 +1070,16 @@ impl Harness {
                         .or_default();
                     *count += 1;
                     repeated_failure |= *count >= 3;
-                } else if matches!(
-                    call.function.name.as_str(),
-                    "file_write"
-                        | "file_apply_patch"
-                        | "apply_patch"
-                        | "file_delete"
-                        | "file_restore"
-                ) {
+                } else if !failed
+                    && matches!(
+                        call.function.name.as_str(),
+                        "file_write"
+                            | "file_apply_patch"
+                            | "apply_patch"
+                            | "file_delete"
+                            | "file_restore"
+                    )
+                {
                     // Editing can make a previously failing test meaningful again.
                     failed_calls.clear();
                 }
