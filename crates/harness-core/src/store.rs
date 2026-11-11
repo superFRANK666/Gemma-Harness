@@ -373,6 +373,20 @@ impl Store {
         })?;
         rows.map(|r| { let (seq,kind,payload,created_at)=r?; Ok(serde_json::json!({"seq":seq,"kind":kind,"payload":serde_json::from_str::<Value>(&payload)?,"createdAt":created_at})) }).collect()
     }
+    pub(crate) fn task_checkpoint(&self, id: &str) -> Result<Option<Value>> {
+        let payload: Option<String> = self.db.lock().unwrap().query_row(
+            "SELECT payload FROM events WHERE session_id=?1 AND kind='task_checkpoint' ORDER BY seq DESC LIMIT 1",
+            [id], |row| row.get(0),
+        ).optional()?;
+        payload.map(|payload| serde_json::from_str(&payload).map_err(Into::into)).transpose()
+    }
+    pub(crate) fn tool_evidence(&self, id: &str, call_id: &str) -> Result<Option<Value>> {
+        let payload: Option<String> = self.db.lock().unwrap().query_row(
+            "SELECT payload FROM events WHERE session_id=?1 AND kind='activity' AND json_extract(payload,'$.type')='tool_completed' AND json_extract(payload,'$.callId')=?2 ORDER BY seq DESC LIMIT 1",
+            params![id, call_id], |row| row.get(0),
+        ).optional()?;
+        payload.map(|payload| serde_json::from_str(&payload).map_err(Into::into)).transpose()
+    }
     pub fn messages(&self, id: &str) -> Result<Vec<ChatMessage>> {
         // A compaction is a projection checkpoint. Do not deserialize old messages,
         // screenshots or terminal activity again on every new turn.

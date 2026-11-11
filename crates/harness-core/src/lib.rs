@@ -6,6 +6,7 @@ mod inference;
 pub mod mcp;
 mod projects;
 pub mod store;
+mod task;
 
 use anyhow::{bail, Context, Result};
 use harness_executor::Executor;
