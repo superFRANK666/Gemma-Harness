@@ -1605,7 +1605,7 @@ fn tool_content(
     if let Some(elements) = value["elements"].as_array() {
         let mut shown = Vec::new();
         let mut remaining =
-            (max / 3).min(max.saturating_sub(metadata.to_string().chars().count() + 768));
+            (max / 3).min(max.saturating_sub(json!(&metadata).to_string().chars().count() + 768));
         for element in elements.iter().take(24) {
             let mut node = serde_json::Map::new();
             for key in [
@@ -1629,12 +1629,13 @@ fn tool_content(
                     node.insert(key.into(), field);
                 }
             }
+            let node = Value::Object(node);
             let size = node.to_string().chars().count() + 1;
             if size > remaining {
                 break;
             }
             remaining -= size;
-            shown.push(Value::Object(node));
+            shown.push(node);
         }
         metadata.insert(
             "omitted_elements".into(),
@@ -1644,7 +1645,23 @@ fn tool_content(
     }
     let mut envelope = json!({"truncated":true,"metadata":metadata,"full_result_artifact":full_artifact,"artifact_error":artifact_error,"instruction":"The preview is incomplete. Read the full result artifact with artifact_read if needed.","preview_json_prefix":""});
     if envelope.to_string().chars().count() > max {
-        envelope["metadata"] = json!({});
+        let mut essential = serde_json::Map::new();
+        for key in [
+            "snapshot_id",
+            "tab_id",
+            "evidence_call_id",
+            "requires_observation",
+            "indeterminate",
+            "isError",
+        ] {
+            if let Some(field) = value
+                .get(key)
+                .filter(|field| field.to_string().chars().count() <= max / 16)
+            {
+                essential.insert(key.into(), field.clone());
+            }
+        }
+        envelope["metadata"] = json!(essential);
         envelope["artifact_error"] =
             json!(artifact_error.map(|s| s.chars().take(300).collect::<String>()));
     }
