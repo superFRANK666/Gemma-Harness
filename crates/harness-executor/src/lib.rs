@@ -1216,6 +1216,14 @@ impl Executor {
                 // A correctly framed tool rejection (for example a stale ref)
                 // does not corrupt the transport or require closing its browser.
                 if let Some(error) = response.get("error").filter(|error| !error.is_null()) {
+                    if error["indeterminate"] == true {
+                        let reason = error["message"].as_str().unwrap_or("Input outcome is indeterminate").to_owned();
+                        return Err(IndeterminateToolOperation {
+                            tool: format!("{}_{}", if native { "desktop" } else { "browser" }, method),
+                            source: anyhow::anyhow!(reason.clone()),
+                            reason,
+                        }.into());
+                    }
                     bail!(
                         "{}",
                         error["message"].as_str().unwrap_or("Computer Use failed")

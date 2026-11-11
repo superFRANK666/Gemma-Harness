@@ -557,7 +557,8 @@ impl Harness {
                     .any(|name| mentions_tool_name(&text, name));
             if calls.is_empty()
                 && (task_state.as_ref().is_some_and(|state| state["status"] == "active" && state["report_only"] != true)
-                    || !computer.pending().is_empty())
+                    || (!computer.pending().is_empty()
+                        && task_state.as_ref().is_none_or(|state| state["status"] != "blocked")))
             {
                 self.store.append(id, "activity", &json!({"type":"assistant_partial","text":text,"status":"unfinished_task_checkpoint"}))?;
                 if completion_repairs >= 2 {
@@ -733,7 +734,12 @@ impl Harness {
                                 json!({"matchedCount":matched.len(),"offset":offset,"omittedCount":matched.len().saturating_sub(next),"nextOffset":if next < matched.len(){Some(next)}else{None},"retained":keep,"loaded":found.iter().map(|d|json!({"name":d["name"],"description":d["description"]})).collect::<Vec<_>>(),"unavailable":mcp_warnings,"instruction":"Only retained names and this optional page are loaded for the next request. Use nextOffset to browse more matches. Missing groups may be disabled."})
                             }
                         } else if call.function.name == "task_checkpoint" {
-                            match task::save(&self.store, id, args) {
+                            let saved = if args["status"] == "completed" && !computer.pending().is_empty() {
+                                Err(anyhow::anyhow!("Computer actions still require observation; observe them or record a concrete blocker instead of completion"))
+                            } else {
+                                task::save(&self.store, id, args)
+                            };
+                            match saved {
                                 Ok(saved) => {
                                     task_state = Some(saved["state"].clone());
                                     saved
@@ -746,7 +752,7 @@ impl Harness {
                                 Ok(found) => json!({"matches":found}),
                                 Err(e) => json!({"isError":true,"error":e.to_string()}),
                             }
-                        } else if let Err(error) = computer.begin(&self.store, id, &call.function.name) {
+                        } else if let Err(error) = computer.begin(&self.store, id, &call.function.name, &args) {
                             json!({"isError":true,"notExecuted":true,"error":error.to_string()})
                         } else {
                             match self
@@ -919,6 +925,7 @@ impl Harness {
                     fit_artifact_page(&mut result, 5800)?;
                 }
                 let failed = task::failed(&result);
+                result["evidence_call_id"] = json!(call.id);
                 computer.observe_result(&self.store, id, &call.function.name, &result, vision_ready)?;
                 if failed {
                     batch_halted = true;

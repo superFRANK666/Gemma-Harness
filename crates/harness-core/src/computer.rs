@@ -28,10 +28,11 @@ impl ComputerState {
         store.append(session, "computer_state", &json!({"device":self.device,"pending":self.pending}))?;
         Ok(())
     }
-    pub fn begin(&mut self, store: &Store, session: &str, name: &str) -> Result<()> {
+    pub fn begin(&mut self, store: &Store, session: &str, name: &str, args: &Value) -> Result<()> {
         let group = match name {
             "desktop_act" => "desktop",
             "browser_act" => "browser",
+            "browser_observe" if args["url"].as_str().is_some_and(|s| !s.is_empty()) => "browser",
             _ => return Ok(()),
         };
         if self.pending.contains(group) {
