@@ -622,9 +622,10 @@ impl Harness {
                 );
                 cfg["diagnostics"] = old["diagnostics"].clone();
                 if let Some(value) = cfg.get("engineConfig").filter(|v| !v.is_null()) {
-                    let requested: engine::EngineConfig = serde_json::from_value(value.clone())
-                        .context("本地引擎配置无效")?;
-                    if !(2048..=262144).contains(&requested.context_length) || requested.port < 1024 {
+                    let requested: engine::EngineConfig =
+                        serde_json::from_value(value.clone()).context("本地引擎配置无效")?;
+                    if !(2048..=262144).contains(&requested.context_length) || requested.port < 1024
+                    {
                         bail!("上下文必须在 2048 到 262144 之间，端口必须在 1024 到 65535 之间")
                     }
                     let normalized = serde_json::to_value(&requested)?;
