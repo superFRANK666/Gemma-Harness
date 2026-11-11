@@ -373,10 +373,10 @@ impl Store {
         })?;
         rows.map(|r| { let (seq,kind,payload,created_at)=r?; Ok(serde_json::json!({"seq":seq,"kind":kind,"payload":serde_json::from_str::<Value>(&payload)?,"createdAt":created_at})) }).collect()
     }
-    pub(crate) fn task_checkpoint(&self, id: &str) -> Result<Option<Value>> {
+    pub(crate) fn runtime_state(&self, id: &str, kind: &str) -> Result<Option<Value>> {
         let payload: Option<String> = self.db.lock().unwrap().query_row(
-            "SELECT payload FROM events WHERE session_id=?1 AND kind='task_checkpoint' ORDER BY seq DESC LIMIT 1",
-            [id], |row| row.get(0),
+            "SELECT payload FROM events WHERE session_id=?1 AND kind=?2 ORDER BY seq DESC LIMIT 1",
+            params![id, kind], |row| row.get(0),
         ).optional()?;
         payload.map(|payload| serde_json::from_str(&payload).map_err(Into::into)).transpose()
     }

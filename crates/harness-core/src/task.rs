@@ -28,7 +28,8 @@ pub fn definition() -> Value {
                 }},
                 "uncertainties":{"type":"array","maxItems":4,"items":text(160)},
                 "next_action":{"type":"string","maxLength":160},
-                "blocker":{"type":"string","maxLength":240}
+                "blocker":{"type":"string","maxLength":240},
+                "report_only":{"type":"boolean","description":"True only for a user-requested status report or clarification while the underlying task stays active. Applies to this turn only; preserve its original objective and unfinished steps."}
             },"required":["objective","status","steps","evidence","uncertainties","next_action"]
         }
     })
@@ -48,6 +49,9 @@ pub fn save(store: &Store, session: &str, state: Value) -> Result<Value> {
         bail!("Task checkpoint exceeds 4200 characters; shorten conclusions and evidence")
     }
     let steps = state["steps"].as_array().unwrap();
+    if state["report_only"] == true && state["status"] != "active" {
+        bail!("report_only is for reporting an active task without marking it completed")
+    }
     for step in steps {
         if step["status"] == "completed"
             && step["result"].as_str().is_none_or(|s| s.trim().is_empty())
