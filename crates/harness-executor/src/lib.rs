@@ -1217,12 +1217,20 @@ impl Executor {
                 // does not corrupt the transport or require closing its browser.
                 if let Some(error) = response.get("error").filter(|error| !error.is_null()) {
                     if error["indeterminate"] == true {
-                        let reason = error["message"].as_str().unwrap_or("Input outcome is indeterminate").to_owned();
+                        let reason = error["message"]
+                            .as_str()
+                            .unwrap_or("Input outcome is indeterminate")
+                            .to_owned();
                         return Err(IndeterminateToolOperation {
-                            tool: format!("{}_{}", if native { "desktop" } else { "browser" }, method),
+                            tool: format!(
+                                "{}_{}",
+                                if native { "desktop" } else { "browser" },
+                                method
+                            ),
                             source: anyhow::anyhow!(reason.clone()),
                             reason,
-                        }.into());
+                        }
+                        .into());
                     }
                     bail!(
                         "{}",
@@ -1982,7 +1990,6 @@ pub fn definitions() -> Vec<Value> {
         tool("desktop_act","Act on native desktop. launch needs app; other actions need snapshot_id. click needs ref or screenshot x and y; fill needs ref and text; key needs key.",json!({"action":{"type":"string","enum":["click","fill","key","scroll","launch"],"description":"Action to perform."},"snapshot_id":snapshot,"ref":reference,"text":{"type":"string","description":"Text to fill; empty string clears the field."},"key":{"type":"string","description":"Key or key combination."},"x":coordinate,"y":coordinate,"delta":coordinate,"app":{"type":"string","description":"Application name for launch."}}),&["action"]),
     ]
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

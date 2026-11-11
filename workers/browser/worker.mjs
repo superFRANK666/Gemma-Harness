@@ -35,7 +35,7 @@ async function discardSnapshot(id) {
 }
 
 async function visualState(page) {
-  return page.evaluate(() => {
+  const read = () => {
     const key = '__gemmaHarnessVisualRevision';
     if (!globalThis[key]) {
       const state = { revision: 0 };
@@ -45,7 +45,10 @@ async function visualState(page) {
     }
     return { revision: globalThis[key].revision, url: location.href,
       width: innerWidth, height: innerHeight, x: scrollX, y: scrollY, scale: devicePixelRatio };
-  });
+  };
+  const main = await page.mainFrame().evaluate(read);
+  const frames = await Promise.all(page.frames().filter(frame => frame !== page.mainFrame()).map(frame => frame.evaluate(read)));
+  return { ...main, frames };
 }
 
 async function performInput(operation) {
@@ -81,7 +84,7 @@ async function ensureContext() {
     const id = crypto.randomUUID();
     tabs.set(id, page); currentTab ||= id;
     page.on('close', () => { tabs.delete(id); void discardSnapshot(id); if (currentTab === id) currentTab = tabs.keys().next().value; });
-    page.on('framenavigated', frame => { if (frame === page.mainFrame()) void discardSnapshot(id); });
+    page.on('framenavigated', () => { void discardSnapshot(id); });
   }
   context.pages().forEach(register);
   context.on('page', register);
@@ -147,9 +150,13 @@ async function screenshot(params) {
   const before = await visualState(page);
   const filename = `browser-${crypto.randomUUID()}.png`;
   const artifact = path.join(artifactDir, filename);
-  const bytes = await page.screenshot({ path: artifact, type: 'png', fullPage: false });
+  // Hiding carets mutates input styles in Playwright and would invalidate our own capture.
+  const bytes = await page.screenshot({ path: artifact, type: 'png', fullPage: false, caret: 'initial' });
   const view = await visualState(page);
-  if (JSON.stringify(before) !== JSON.stringify(view)) throw new Error('Page changed during screenshot capture; capture again or use semantic refs');
+  if (JSON.stringify(before) !== JSON.stringify(view)) {
+    await fs.unlink(artifact).catch(() => {});
+    throw new Error('Page changed during screenshot capture; capture again or use semantic refs');
+  }
   const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20);
   const snapshot_id = crypto.randomUUID();
   snapshots.set(id, { snapshot_id, handles: new Map(), url: page.url(), screenshot: true, view, width, height });
@@ -186,6 +193,7 @@ async function act(params) {
   }
   if (action === 'fill' && (!element || typeof params.text !== 'string')) throw new Error('fill requires an element ref and text');
   if (action === 'press' && (typeof params.key !== 'string' || !params.key.trim())) throw new Error('press requires key');
+  if (snapshots.get(id) !== snapshot) throw new Error('Snapshot invalidated during action preparation; observe again');
   // Consume before dispatch, including partial failures. Old refs cannot retry input.
   snapshots.delete(id);
   try { await performInput(async () => { switch (action) {

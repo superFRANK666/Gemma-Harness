@@ -19,13 +19,20 @@ impl ComputerState {
                 }
             }
         }
-        Ok(Self { device: device.into(), pending })
+        Ok(Self {
+            device: device.into(),
+            pending,
+        })
     }
     pub fn pending(&self) -> &BTreeSet<String> {
         &self.pending
     }
     fn persist(&self, store: &Store, session: &str) -> Result<()> {
-        store.append(session, "computer_state", &json!({"device":self.device,"pending":self.pending}))?;
+        store.append(
+            session,
+            "computer_state",
+            &json!({"device":self.device,"pending":self.pending}),
+        )?;
         Ok(())
     }
     pub fn begin(&mut self, store: &Store, session: &str, name: &str, args: &Value) -> Result<()> {
@@ -53,7 +60,9 @@ impl ComputerState {
         if task::failed(result) {
             return Ok(());
         }
-        let snapshot = result["snapshot_id"].as_str().is_some_and(|s| !s.is_empty());
+        let snapshot = result["snapshot_id"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty());
         let group = match name {
             "desktop_observe" if snapshot => "desktop",
             "desktop_screenshot" if snapshot && vision_ready => "desktop",

@@ -1,6 +1,6 @@
 mod agent;
-mod computer;
 pub mod artifact;
+mod computer;
 pub mod context;
 pub mod engine;
 mod inference;
@@ -1151,7 +1151,6 @@ fn without_binary(mut value: Value) -> Value {
     walk(&mut value);
     value
 }
-
 #[cfg(test)]
 mod update_safety_tests {
     use super::*;

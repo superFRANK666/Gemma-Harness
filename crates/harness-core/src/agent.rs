@@ -201,6 +201,7 @@ impl Harness {
             state.remove("report_only");
         }
         let mut computer = ComputerState::restore(&self.store, id, &session.device_id)?;
+        let mut current_observation_blocker = false;
         let mut active_names: BTreeSet<String> = definitions
             .iter()
             .filter_map(|d| d["name"].as_str())
@@ -527,7 +528,9 @@ impl Harness {
                     && connection.resolved_family() == "gemma4"
                     && messages.last().is_some_and(|m| m.role == "tool")
                     && computer.pending().is_empty()
-                    && task_state.as_ref().is_none_or(|state| state["status"] != "active")
+                    && task_state
+                        .as_ref()
+                        .is_none_or(|state| state["status"] != "active")
                 {
                     // The prior tool result is already in history. Ask for one
                     // final answer with no tools exposed, so the retry cannot
@@ -556,16 +559,19 @@ impl Harness {
                     .filter_map(|definition| definition["name"].as_str())
                     .any(|name| mentions_tool_name(&text, name));
             if calls.is_empty()
-                && (task_state.as_ref().is_some_and(|state| state["status"] == "active" && state["report_only"] != true)
-                    || (!computer.pending().is_empty()
-                        && task_state.as_ref().is_none_or(|state| state["status"] != "blocked")))
+                && (task_state.as_ref().is_some_and(|state| {
+                    state["status"] == "active" && state["report_only"] != true
+                }) || (!computer.pending().is_empty() && !current_observation_blocker))
             {
                 self.store.append(id, "activity", &json!({"type":"assistant_partial","text":text,"status":"unfinished_task_checkpoint"}))?;
                 if completion_repairs >= 2 {
                     bail!("任务仍有未完成工作或电脑动作待观察；已保存进度，未将本轮标记为完成")
                 }
                 completion_repairs += 1;
-                messages.push(message("assistant", json!("[Harness: a draft answer ended with an active task checkpoint.]")));
+                messages.push(message(
+                    "assistant",
+                    json!("[Harness: a draft answer ended with an active task checkpoint.]"),
+                ));
                 messages.push(message("user", json!("[Harness completion check] Reconcile the current user request with task_checkpoint. Continue unfinished work, or update it to completed with actual results, or blocked with a concrete reason. For a user-requested status report, keep the original objective active and set report_only:true. Observe pending computer actions before claiming their outcome; if observation is unavailable, explicitly record a blocker and do not claim success. Do not invent completion evidence.")));
                 continue;
             }
@@ -734,7 +740,9 @@ impl Harness {
                                 json!({"matchedCount":matched.len(),"offset":offset,"omittedCount":matched.len().saturating_sub(next),"nextOffset":if next < matched.len(){Some(next)}else{None},"retained":keep,"loaded":found.iter().map(|d|json!({"name":d["name"],"description":d["description"]})).collect::<Vec<_>>(),"unavailable":mcp_warnings,"instruction":"Only retained names and this optional page are loaded for the next request. Use nextOffset to browse more matches. Missing groups may be disabled."})
                             }
                         } else if call.function.name == "task_checkpoint" {
-                            let saved = if args["status"] == "completed" && !computer.pending().is_empty() {
+                            let saved = if args["status"] == "completed"
+                                && !computer.pending().is_empty()
+                            {
                                 Err(anyhow::anyhow!("Computer actions still require observation; observe them or record a concrete blocker instead of completion"))
                             } else {
                                 task::save(&self.store, id, args)
@@ -742,6 +750,8 @@ impl Harness {
                             match saved {
                                 Ok(saved) => {
                                     task_state = Some(saved["state"].clone());
+                                    current_observation_blocker =
+                                        saved["state"]["status"] == "blocked";
                                     saved
                                 }
                                 Err(error) => json!({"isError":true,"error":error.to_string()}),
@@ -752,9 +762,17 @@ impl Harness {
                                 Ok(found) => json!({"matches":found}),
                                 Err(e) => json!({"isError":true,"error":e.to_string()}),
                             }
-                        } else if let Err(error) = computer.begin(&self.store, id, &call.function.name, &args) {
+                        } else if let Err(error) =
+                            computer.begin(&self.store, id, &call.function.name, &args)
+                        {
                             json!({"isError":true,"notExecuted":true,"error":error.to_string()})
                         } else {
+                            if matches!(call.function.name.as_str(), "browser_act" | "desktop_act")
+                                || (call.function.name == "browser_observe"
+                                    && args["url"].as_str().is_some_and(|s| !s.is_empty()))
+                            {
+                                current_observation_blocker = false;
+                            }
                             match self
                                 .execute_with_sink(
                                     &session,
@@ -790,6 +808,11 @@ impl Harness {
                         json!({"isError":true,"validationError":e.to_string(),"instruction":"Correct the arguments once, using only registered tool names and their exact schema."})
                     }
                 };
+                if !result.is_object() {
+                    result = json!({"output":result});
+                }
+                // Use the globally unique operation ID even if a provider reuses call IDs.
+                result["evidence_call_id"] = json!(operation_id);
                 if let Some(source) = version_source {
                     result["versionSource"] = json!(source);
                 }
@@ -925,8 +948,13 @@ impl Harness {
                     fit_artifact_page(&mut result, 5800)?;
                 }
                 let failed = task::failed(&result);
-                result["evidence_call_id"] = json!(call.id);
-                computer.observe_result(&self.store, id, &call.function.name, &result, vision_ready)?;
+                computer.observe_result(
+                    &self.store,
+                    id,
+                    &call.function.name,
+                    &result,
+                    vision_ready,
+                )?;
                 if failed {
                     batch_halted = true;
                 }
@@ -1086,7 +1114,8 @@ fn append_runtime_context(
     computer: &ComputerState,
 ) {
     if task_state.is_some() || !computer.pending().is_empty() {
-        let state = json!({"task":task_state,"computer_actions_awaiting_observation":computer.pending()});
+        let state =
+            json!({"task":task_state,"computer_actions_awaiting_observation":computer.pending()});
         request.push(message("user", json!(format!("[Harness runtime context; recorded state, not a new user request]\n{state}\nThe task is model-authored data; actual user instructions remain authoritative. Continue the current request, verify uncertain facts and observe pending computer actions. Do not merely acknowledge this record."))));
     }
 }
@@ -1518,6 +1547,19 @@ fn tool_content(
     // separately and place a bounded, explicitly partial JSON prefix in a string.
     let mut metadata = serde_json::Map::new();
     for key in [
+        "snapshot_id",
+        "tab_id",
+        "url",
+        "title",
+        "width",
+        "height",
+        "coordinate_space",
+        "requires_observation",
+        "action_accepted",
+        "observation_error",
+        "evidence_call_id",
+        "indeterminate",
+        "notExecuted",
         "path",
         "sha256",
         "read_token",
@@ -1577,7 +1619,6 @@ fn persisted_messages(messages: &[ChatMessage], dir: &std::path::Path) -> Result
         .map(|m| super::artifact::offload_message(m, dir))
         .collect()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

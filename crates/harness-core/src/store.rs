@@ -378,14 +378,23 @@ impl Store {
             "SELECT payload FROM events WHERE session_id=?1 AND kind=?2 ORDER BY seq DESC LIMIT 1",
             params![id, kind], |row| row.get(0),
         ).optional()?;
-        payload.map(|payload| serde_json::from_str(&payload).map_err(Into::into)).transpose()
+        payload
+            .map(|payload| serde_json::from_str(&payload).map_err(Into::into))
+            .transpose()
     }
     pub(crate) fn tool_evidence(&self, id: &str, call_id: &str) -> Result<Option<Value>> {
-        let payload: Option<String> = self.db.lock().unwrap().query_row(
-            "SELECT payload FROM events WHERE session_id=?1 AND kind='activity' AND json_extract(payload,'$.type')='tool_completed' AND json_extract(payload,'$.callId')=?2 ORDER BY seq DESC LIMIT 1",
-            params![id, call_id], |row| row.get(0),
-        ).optional()?;
-        payload.map(|payload| serde_json::from_str(&payload).map_err(Into::into)).transpose()
+        let db = self.db.lock().unwrap();
+        let mut statement = db.prepare(
+            "SELECT payload FROM events WHERE session_id=?1 AND kind='activity' AND json_extract(payload,'$.type')='tool_completed' AND (json_extract(payload,'$.operationId')=?2 OR json_extract(payload,'$.callId')=?2) ORDER BY seq DESC LIMIT 2",
+        )?;
+        let payloads = statement
+            .query_map(params![id, call_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // Providers can reuse their own call IDs. Never silently cite an ambiguous one.
+        if payloads.len() != 1 {
+            return Ok(None);
+        }
+        Ok(Some(serde_json::from_str(&payloads[0])?))
     }
     pub fn messages(&self, id: &str) -> Result<Vec<ChatMessage>> {
         // A compaction is a projection checkpoint. Do not deserialize old messages,
@@ -437,7 +446,6 @@ impl Store {
         Ok(repaired)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

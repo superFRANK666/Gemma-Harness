@@ -7,7 +7,7 @@ pub fn definition() -> Value {
     let text = |max| json!({"type":"string","minLength":1,"maxLength":max});
     json!({
         "name":"task_checkpoint",
-        "description":"Save or replace a concise task checkpoint for multi-step work. Survives context compaction and restarts. Align it with actual user instructions; skip for simple questions. Completed steps need a result; evidence call IDs must refer to successful tools in this session. This records claims, not proof that those claims follow from evidence. Mark blocked with a concrete blocker when user input or external changes are necessary. Do not store private chain-of-thought; record conclusions, uncertainty and the next action.",
+        "description":"Save or replace a concise task checkpoint for multi-step work. Survives context compaction and restarts. Align it with actual user instructions; skip for simple questions. Completed steps need a result. For evidence, copy evidence_call_id from a successful tool result into call_id; never guess IDs. This records claims, not proof that those claims follow from evidence. Mark blocked with a concrete blocker when user input or external changes are necessary. Do not store private chain-of-thought; record conclusions, uncertainty and the next action.",
         "parameters":{
             "type":"object","additionalProperties":false,
             "properties":{
@@ -49,6 +49,13 @@ pub fn save(store: &Store, session: &str, state: Value) -> Result<Value> {
         bail!("Task checkpoint exceeds 4200 characters; shorten conclusions and evidence")
     }
     let steps = state["steps"].as_array().unwrap();
+    if state["objective"].as_str().unwrap().trim().is_empty()
+        || steps
+            .iter()
+            .any(|step| step["title"].as_str().unwrap().trim().is_empty())
+    {
+        bail!("Objective and step titles must contain meaningful text")
+    }
     if state["report_only"] == true && state["status"] != "active" {
         bail!("report_only is for reporting an active task without marking it completed")
     }
@@ -63,19 +70,26 @@ pub fn save(store: &Store, session: &str, state: Value) -> Result<Value> {
         "completed" => {
             if steps.iter().any(|s| s["status"] != "completed")
                 || !state["next_action"].as_str().unwrap().trim().is_empty()
-                || state["blocker"].as_str().is_some_and(|s| !s.trim().is_empty())
+                || state["blocker"]
+                    .as_str()
+                    .is_some_and(|s| !s.trim().is_empty())
             {
                 bail!("Completed tasks must have completed steps, no blocker and no next action")
             }
         }
         "blocked" => {
-            if state["blocker"].as_str().is_none_or(|s| s.trim().is_empty()) {
+            if state["blocker"]
+                .as_str()
+                .is_none_or(|s| s.trim().is_empty())
+            {
                 bail!("Blocked tasks need a concrete blocker")
             }
         }
         _ => {
             if state["next_action"].as_str().unwrap().trim().is_empty()
-                || !steps.iter().any(|s| matches!(s["status"].as_str(), Some("pending" | "in_progress")))
+                || !steps
+                    .iter()
+                    .any(|s| matches!(s["status"].as_str(), Some("pending" | "in_progress")))
             {
                 bail!("Active tasks need unfinished work and a concrete next action")
             }
@@ -90,9 +104,11 @@ pub fn save(store: &Store, session: &str, state: Value) -> Result<Value> {
                 || failed(&event["result"])
                 || event["result"]["requires_observation"] == true
         }) {
-            bail!("Evidence call {call_id} is missing, failed, unobserved or self-referential; inspect real state")
+            bail!("Evidence call {call_id} is missing, ambiguous, failed, unobserved or self-referential; inspect real state")
         }
     }
     store.append(session, "task_checkpoint", &state)?;
-    Ok(json!({"saved":true,"state":state,"note":"Model-authored checkpoint. Successful call IDs establish provenance only; verify that the evidence actually supports each claim. Original user instructions remain authoritative."}))
+    Ok(
+        json!({"saved":true,"state":state,"note":"Model-authored checkpoint. Successful call IDs establish provenance only; verify that the evidence actually supports each claim. Original user instructions remain authoritative."}),
+    )
 }
