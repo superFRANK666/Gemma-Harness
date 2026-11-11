@@ -209,7 +209,10 @@ impl Harness {
                 !n.starts_with("browser_")
                     && !n.starts_with("desktop_")
                     && !n.starts_with("mcp_")
-                    && !matches!(*n, "file_read_chunk" | "file_stat" | "file_restore")
+                    && !matches!(
+                        *n,
+                        "file_read_chunk" | "file_stat" | "file_restore" | "task_checkpoint"
+                    )
             })
             .map(String::from)
             .collect();
@@ -260,8 +263,17 @@ impl Harness {
             let estimated_budget =
                 context::input_budget_for(connection.context_length, output_tokens);
             context::drop_old_images(&mut messages);
+            let workflow = if active_names.contains("task_checkpoint")
+                || task_state
+                    .as_ref()
+                    .is_some_and(|state| state["status"] == "active")
+            {
+                WORKFLOW
+            } else {
+                "For multi-step work, discover task_checkpoint with tool_search to retain the objective, evidence and next action. Wait for prior results before dependent calls."
+            };
             let system = format!(
-                "{SYSTEM}\n{WORKFLOW}\nExecution device: {}. Workspace: {}.\nRespect user instructions in chronological order; later explicit corrections supersede earlier ones.{}",
+                "{SYSTEM}\n{workflow}\nExecution device: {}. Workspace: {}.\nRespect user instructions in chronological order; later explicit corrections supersede earlier ones.{}",
                 session.device_id,
                 session.workspace,
                 if connection.resolved_family() == "gemma4" {
@@ -670,10 +682,21 @@ impl Harness {
                                 if !mcp_discovered
                                     && !matches!(
                                         query.as_str(),
-                                        "browser" | "网页" | "浏览器" | "desktop" | "桌面"
+                                        "browser"
+                                            | "网页"
+                                            | "浏览器"
+                                            | "desktop"
+                                            | "桌面"
+                                            | "task"
+                                            | "plan"
+                                            | "任务"
+                                            | "计划"
                                     )
                                     && !query.starts_with("browser_")
                                     && !query.starts_with("desktop_")
+                                    && !definitions
+                                        .iter()
+                                        .any(|definition| definition["name"] == query)
                                 {
                                     let (tools, warnings) = self
                                         .mcp
@@ -691,6 +714,11 @@ impl Harness {
                                         "desktop_"
                                     } else if query == "mcp" {
                                         "mcp_"
+                                    } else if matches!(
+                                        query.as_str(),
+                                        "task" | "plan" | "任务" | "计划"
+                                    ) {
+                                        "task_checkpoint"
                                     } else {
                                         query.as_str()
                                     };

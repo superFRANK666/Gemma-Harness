@@ -112,7 +112,9 @@ async function verifyLocal() {
     }
     platforms[platform] = { url: downloadRoot + encodeURIComponent(name), signature };
   }
-  const manifest = { version, notes: '包含应用界面更新与签名验证的应用内更新。', platforms };
+  const notes = (await fs.readFile(path.join(root, 'docs/release-notes.md'), 'utf8')).trim();
+  if (!notes) throw new Error('Release notes must not be empty.');
+  const manifest = { version, notes, platforms };
   await fs.writeFile(path.join(assetDir, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const sums = [];
   for (const name of [...sourceAssets, 'latest.json']) sums.push(`${await sha256(path.join(assetDir, name))}  ${name}`);

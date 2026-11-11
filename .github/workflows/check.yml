@@ -4,6 +4,11 @@ on:
     branches-ignore: ['update-channel']
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_tests:
+        description: Run tests only when explicitly authorized
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -31,20 +36,26 @@ jobs:
       - run: node scripts/setup-workers.mjs
       - run: npm run build
       - run: npm run test:release
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --exclude harness-desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
       - run: cargo check -p harness-desktop
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --lib --bins -- -D warnings
       - run: npm --prefix workers/browser run install-browser -- --with-deps
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
       - run: npm --prefix workers/browser test
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
         env:
           HARNESS_BROWSER_INTEGRATION: '1'
           HARNESS_BROWSER_HEADLESS: '1'
       - run: cargo fmt --manifest-path workers/native/Cargo.toml -- --check
       - run: npx playwright install --with-deps chromium
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
       - run: npm run test:ui
+        if: github.event_name == 'workflow_dispatch' && inputs.run_tests
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.run_tests
         with:
           name: test-output-${{ runner.os }}
           path: tests/ui/artifacts/

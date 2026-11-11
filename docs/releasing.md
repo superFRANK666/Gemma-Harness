@@ -13,7 +13,7 @@
 ## 发布步骤
 
 1. 更新三个版本号（`package.json`、workspace `Cargo.toml`、`tauri.conf.json`）与 `docs/release-notes.md`；版本必须是递增的数字 SemVer。普通本地构建不需要私钥。
-2. 将发布提交推送到 `main`，等待该提交的三平台 Verify 工作流通过，再推送对应标签，例如 `v0.3.2`。
+2. 将发布提交推送到 `main`，等待该提交的三平台 Verify 生产构建检查通过，再推送对应标签，例如 `v0.3.3`。自动推送不运行测试；只有明确获准后才可手动启用 `workflow_dispatch.run_tests`。构建通过不能表述为测试通过。
 3. 标签触发四个平台打包。构建任务使用 Actions 密钥生成更新包，并对 Windows、Linux 和 macOS 更新资产逐个签名，签名绑定版本号。
 4. 发布任务检查六个安装包、两份 macOS 更新归档和六份签名；生成 `latest.json` 与 `SHA256SUMS`，并用嵌入应用的公钥逐一验证签名和版本。
 5. 工作流先上传预发布草稿，检查全部资产的远端 SHA256 和大小，再公开 Release，最后原子更新 `update-channel/latest.json` 并回读。渠道不允许覆盖较新的版本；相同版本若内容不同也会拒绝。
