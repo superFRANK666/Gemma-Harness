@@ -184,6 +184,7 @@ async function act(params) {
     const info = await element.evaluate(elementInfo).catch(() => null);
     if (!info || JSON.stringify(info) !== snapshot.signatures.get(params.ref) || !(await element.isVisible().catch(() => false))) throw new Error('Element changed since observation; observe again');
     if (info.disabled) throw new Error('Element is disabled; observe before choosing another action');
+    if (action === 'fill' && info.readonly) throw new Error('Element is read-only; choose an editable field from a fresh observation');
   }
   if (!['click', 'fill', 'press', 'scroll', 'back', 'forward', 'close_tab'].includes(action)) throw new Error(`Unsupported browser action: ${action}`);
   if (action === 'click' && !element) {

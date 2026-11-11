@@ -227,7 +227,7 @@ impl Harness {
         let mut calibration = context::Calibration::default();
         let mut failed_calls: HashMap<(String, String), usize> = HashMap::new();
         let mut last_observation: Option<(String, String, String, usize)> = None;
-        let mut tool_events_started = 0usize;
+        let mut dispatched_tools: BTreeSet<String> = BTreeSet::new();
         // A checked partial read is sufficient for an exact patch, but not
         // for implicitly authorizing replacement of an entire existing file.
         // The executor still verifies path and current SHA-256 for both.
@@ -478,17 +478,13 @@ impl Harness {
                 if !text.is_empty() {
                     self.store.append(id, "activity", &json!({"type":"assistant_partial","text":text,"status":if cancel.is_cancelled(){"interrupted"}else{"incomplete"}}))?;
                 }
-                if !cancel.is_cancelled()
-                    && connection.resolved_family() == "gemma4"
-                    && tool_events_started == 0
-                    && definitions
-                        .iter()
-                        .filter_map(|definition| definition["name"].as_str())
-                        .any(|name| mentions_tool_name(&text, name))
-                {
-                    let warning = json!({"type":"capability_warning","capability":"tool_not_run","message":"本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"});
-                    self.store.append(id, "activity", &warning)?;
-                    sink(warning);
+                if !cancel.is_cancelled() && connection.resolved_family() == "gemma4" {
+                    if let Some(warning) =
+                        unexecuted_tool_warning(&text, &definitions, &dispatched_tools)
+                    {
+                        self.store.append(id, "activity", &warning)?;
+                        sink(warning);
+                    }
                 }
                 return Err(e);
             }
@@ -548,16 +544,10 @@ impl Harness {
                 }
                 bail!("模型结束生成但没有返回答案或工具调用；本轮未完成")
             }
-            // Gemma can describe or invent a tool result as ordinary prose.
-            // This factual warning does not try to classify the claim: it only
-            // states whether this turn produced a tool-start event.
-            let mentioned_unrun_tool = connection.resolved_family() == "gemma4"
-                && calls.is_empty()
-                && tool_events_started == 0
-                && definitions
-                    .iter()
-                    .filter_map(|definition| definition["name"].as_str())
-                    .any(|name| mentions_tool_name(&text, name));
+            // Planning and skipped calls cannot stand in for actual dispatch.
+            let unrun_warning = (connection.resolved_family() == "gemma4" && calls.is_empty())
+                .then(|| unexecuted_tool_warning(&text, &definitions, &dispatched_tools))
+                .flatten();
             if calls.is_empty()
                 && (task_state.as_ref().is_some_and(|state| {
                     state["status"] == "active" && state["report_only"] != true
@@ -600,8 +590,7 @@ impl Harness {
             messages.push(assistant);
             sink(json!({"type":"assistant_completed","text":text}));
             if calls.is_empty() {
-                if mentioned_unrun_tool {
-                    let warning = json!({"type":"capability_warning","capability":"tool_not_run","message":"本轮没有工具执行事件；模型提到工具不代表工具已运行，请以实际工具记录为准。"});
+                if let Some(warning) = unrun_warning {
                     self.store.append(id, "activity", &warning)?;
                     sink(warning);
                 }
@@ -653,7 +642,6 @@ impl Harness {
                 };
                 let event = json!({"type":"tool_started","callId":call.id,"operationId":operation_id,"name":call.function.name,"arguments":call.function.arguments,"effectiveArguments":effective_arguments,"versionSource":version_source,"deviceId":session.device_id});
                 self.store.append(id, "activity", &event)?;
-                tool_events_started += 1;
                 sink(event);
                 let started = std::time::Instant::now();
                 let mut result = match validation {
@@ -665,6 +653,7 @@ impl Harness {
                         } else if batch_halted {
                             json!({"isError":true,"notExecuted":true,"error":"A prior tool failed; remaining calls were not executed. Inspect the failure and replan dependent work."})
                         } else if call.function.name == "tool_search" {
+                            dispatched_tools.insert(call.function.name.clone());
                             let query = args["query"].as_str().unwrap_or("").trim().to_lowercase();
                             let keep: BTreeSet<String> = args["keep"]
                                 .as_array()
@@ -740,6 +729,7 @@ impl Harness {
                                 json!({"matchedCount":matched.len(),"offset":offset,"omittedCount":matched.len().saturating_sub(next),"nextOffset":if next < matched.len(){Some(next)}else{None},"retained":keep,"loaded":found.iter().map(|d|json!({"name":d["name"],"description":d["description"]})).collect::<Vec<_>>(),"unavailable":mcp_warnings,"instruction":"Only retained names and this optional page are loaded for the next request. Use nextOffset to browse more matches. Missing groups may be disabled."})
                             }
                         } else if call.function.name == "task_checkpoint" {
+                            dispatched_tools.insert(call.function.name.clone());
                             let saved = if args["status"] == "completed"
                                 && !computer.pending().is_empty()
                             {
@@ -757,6 +747,7 @@ impl Harness {
                                 Err(error) => json!({"isError":true,"error":error.to_string()}),
                             }
                         } else if call.function.name == "history_search" {
+                            dispatched_tools.insert(call.function.name.clone());
                             let query = args["query"].as_str().unwrap_or("").to_lowercase();
                             match self.store.search_events(id, &query) {
                                 Ok(found) => json!({"matches":found}),
@@ -767,6 +758,7 @@ impl Harness {
                         {
                             json!({"isError":true,"notExecuted":true,"error":error.to_string()})
                         } else {
+                            dispatched_tools.insert(call.function.name.clone());
                             if matches!(call.function.name.as_str(), "browser_act" | "desktop_act")
                                 || (call.function.name == "browser_observe"
                                     && args["url"].as_str().is_some_and(|s| !s.is_empty()))
@@ -1261,6 +1253,24 @@ fn mentions_tool_name(text: &str, name: &str) -> bool {
         !before.is_some_and(is_name_character) && !after.is_some_and(is_name_character)
     })
 }
+fn unexecuted_tool_warning(
+    text: &str,
+    definitions: &[Value],
+    dispatched: &BTreeSet<String>,
+) -> Option<Value> {
+    let names: Vec<&str> = definitions
+        .iter()
+        .filter_map(|definition| definition["name"].as_str())
+        .filter(|name| !dispatched.contains(*name) && mentions_tool_name(text, name))
+        .take(6)
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    Some(
+        json!({"type":"capability_warning","capability":"tool_not_run","tools":names,"message":format!("以下工具本轮未实际派发：{}。提及工具不代表已经执行，请以实际工具结果为准。",names.join("、"))}),
+    )
+}
 
 fn validate_tool_call(
     call: &ToolCall,
@@ -1560,6 +1570,8 @@ fn tool_content(
         "evidence_call_id",
         "indeterminate",
         "notExecuted",
+        "app",
+        "platform",
         "path",
         "sha256",
         "read_token",
@@ -1589,6 +1601,46 @@ fn tool_content(
         {
             metadata.insert(key.into(), field.clone());
         }
+    }
+    if let Some(elements) = value["elements"].as_array() {
+        let mut shown = Vec::new();
+        let mut remaining =
+            (max / 3).min(max.saturating_sub(metadata.to_string().chars().count() + 768));
+        for element in elements.iter().take(24) {
+            let mut node = serde_json::Map::new();
+            for key in [
+                "ref",
+                "role",
+                "tag",
+                "name",
+                "title",
+                "description",
+                "value",
+                "enabled",
+                "disabled",
+                "readonly",
+                "window_id",
+            ] {
+                if let Some(field) = element.get(key) {
+                    let field = field
+                        .as_str()
+                        .map(|s| json!(s.chars().take(180).collect::<String>()))
+                        .unwrap_or_else(|| field.clone());
+                    node.insert(key.into(), field);
+                }
+            }
+            let size = node.to_string().chars().count() + 1;
+            if size > remaining {
+                break;
+            }
+            remaining -= size;
+            shown.push(Value::Object(node));
+        }
+        metadata.insert(
+            "omitted_elements".into(),
+            json!(elements.len().saturating_sub(shown.len())),
+        );
+        metadata.insert("elements".into(), json!(shown));
     }
     let mut envelope = json!({"truncated":true,"metadata":metadata,"full_result_artifact":full_artifact,"artifact_error":artifact_error,"instruction":"The preview is incomplete. Read the full result artifact with artifact_read if needed.","preview_json_prefix":""});
     if envelope.to_string().chars().count() > max {

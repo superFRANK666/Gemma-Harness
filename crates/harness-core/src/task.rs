@@ -40,7 +40,9 @@ pub fn failed(result: &Value) -> bool {
         || result["indeterminate"] == true
         || result["timed_out"] == true
         || result["cancelled"] == true
-        || result["exit_code"].as_i64().is_some_and(|code| code != 0)
+        || result
+            .get("exit_code")
+            .is_some_and(|code| code.as_i64() != Some(0))
 }
 
 pub fn save(store: &Store, session: &str, state: Value) -> Result<Value> {
