@@ -621,7 +621,24 @@ impl Harness {
                     cfg.get("appearance").unwrap_or(&old["appearance"]),
                 );
                 cfg["diagnostics"] = old["diagnostics"].clone();
-                cfg["engineConfig"] = old["engineConfig"].clone();
+                if let Some(value) = cfg.get("engineConfig").filter(|v| !v.is_null()) {
+                    let requested: engine::EngineConfig = serde_json::from_value(value.clone())
+                        .context("本地引擎配置无效")?;
+                    if !(2048..=262144).contains(&requested.context_length) || requested.port < 1024 {
+                        bail!("上下文必须在 2048 到 262144 之间，端口必须在 1024 到 65535 之间")
+                    }
+                    let normalized = serde_json::to_value(&requested)?;
+                    if self.engine.status()?["running"] == true {
+                        let current: engine::EngineConfig =
+                            serde_json::from_value(old["engineConfig"].clone())?;
+                        if normalized != serde_json::to_value(current)? {
+                            bail!("请先停止本地推理，再修改模型或引擎参数")
+                        }
+                    }
+                    cfg["engineConfig"] = normalized;
+                } else {
+                    cfg["engineConfig"] = old["engineConfig"].clone();
+                }
                 cfg["modelProfiles"] = old["modelProfiles"].clone();
                 if let Some(connections) = cfg["connections"].as_array() {
                     let changed: Vec<String> = connections
@@ -867,6 +884,13 @@ impl Harness {
                 let mut config = self.config();
                 config["modelProfiles"]["managed-llama"] = profile;
                 config["engineConfig"] = request["config"].clone();
+                let connections = config["connections"]
+                    .as_array_mut()
+                    .context("模型连接列表无效")?;
+                if !connections.iter().any(|c| c["id"] == "managed-llama") {
+                    connections.push(json!({"id":"managed-llama","name":"本地模型"}));
+                }
+                config["selectedConnectionId"] = json!("managed-llama");
                 // The managed alias is reused across starts. Never retain a
                 // family/thinking choice or budget for the previous weights.
                 if let Some(managed) =

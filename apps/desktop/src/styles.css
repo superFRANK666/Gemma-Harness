@@ -321,6 +321,20 @@ textarea{resize:none}
 .field textarea{height:auto;font-family:var(--font-code);font-size:calc(10px * var(--ui-font-scale));line-height:1.7}
 .field input::placeholder,.field-row input::placeholder,.field textarea::placeholder{color:var(--faint)}
 .field input:focus,.field-row input:focus,.field select:focus,.field-row select:focus,.field textarea:focus{border-color:var(--accent-muted)}
+.model-configuration{border:0;padding:0;margin:0;min-width:0}
+.model-source-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:20px}
+.model-source-actions>button{display:flex;align-items:center;gap:11px;padding:15px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);text-align:left;color:var(--text-secondary)}
+.model-source-actions>button:hover{border-color:var(--accent-muted);background:var(--surface-raised)}
+.model-source-actions>button>svg{flex-shrink:0;color:var(--accent)}
+.model-source-actions>button>svg:last-child{margin-left:auto}
+.model-source-actions span,.local-model-status>div{display:flex;flex-direction:column;gap:6px;min-width:0}
+.model-source-actions strong,.local-model-status strong{font-size:calc(11px * var(--ui-font-scale));font-weight:550;color:var(--text)}
+.model-source-actions small,.local-model-status small,.local-model-hint{font-size:calc(9px * var(--ui-font-scale));color:var(--muted);line-height:1.7}
+.local-model-status{display:flex;align-items:flex-start;gap:10px;padding:14px;border:1px solid var(--line-strong);border-radius:7px;background:var(--surface);margin-bottom:20px}
+.local-model-status>svg{flex-shrink:0;color:var(--accent);margin-top:2px}
+.local-model-status>.icon-button{margin-left:auto;flex-shrink:0}
+.local-model-settings>.diagnostic-report{margin-bottom:20px}
+.model-configuration input[readonly]{color:var(--muted)}
 .connection-tabs{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:25px}
 .connection-tabs button{display:flex;align-items:center;gap:7px;border:1px solid var(--line-strong);background:var(--surface-low);border-radius:5px;font-size:calc(10px * var(--ui-font-scale));color:var(--muted);padding:8px 10px}
 .connection-tabs button.selected{background:var(--surface-raised);border-color:var(--accent-muted);color:var(--text)}
