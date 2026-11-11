@@ -147,10 +147,8 @@ textarea{resize:none}
 .breadcrumb>svg:first-child{color:var(--faint);margin-right:3px}
 .breadcrumb>svg:nth-of-type(2){color:var(--faint)}
 .topbar-actions{display:flex;align-items:center;gap:14px}
-.model-pill{display:flex;align-items:center;gap:8px;font-size:calc(10px * var(--ui-font-scale));color:var(--text-secondary);padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-low)}
 .status-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent-muted);flex-shrink:0}
 .status-dot.configured{background:var(--accent-muted);box-shadow:0 0 5px var(--focus-ring)}
-.topbar-separator{width:1px;height:17px;background:var(--surface-raised)}
 .work-area{display:flex;flex:1;min-height:0}
 .conversation{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 .conversation-scroll{overflow:auto;flex:1;min-height:0}
