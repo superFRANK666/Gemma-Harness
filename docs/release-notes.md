@@ -7,7 +7,7 @@
 - 优化应用内手动检查更新机制：显式携带无缓存请求头以穿透本地与中间代理缓存，并在已安装待重启状态锁定重复检查入口，避免状态被覆盖。
 - 同步更新 macOS、Windows、Linux 安装包与签名更新清单至 0.3.6。
 
-本版已完成前端 TypeScript 类型检查、Vite 生产构建、Playwright UI 自动化测试、发布脚本测试，以及 Rust `cargo fmt`、`cargo check` 与 `cargo clippy` 检查。Windows、Linux 和 Intel Mac 的真实设备安装与更新仍需分别验收。
+本次发布按要求不运行测试；三平台生产构建、安装包签名和远端资产校验的结果以 GitHub Actions 发布流程为准。Windows、Linux 和 Intel Mac 的真实设备安装与更新仍需分别验收。
 
 ## 下载
 
