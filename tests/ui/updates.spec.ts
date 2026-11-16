@@ -1,18 +1,27 @@
 import type { Page } from '@playwright/test';
 import { test, expect, installDesktopFixture, screenshot } from './fixtures';
 
-type Mode = 'available' | 'current' | 'error' | 'download-error' | 'install-error' | 'slow-error';
+type Mode = 'available' | 'current' | 'error' | 'download-error' | 'install-error' | 'restart-error' | 'slow-error';
 async function updateFixture(page: Page, mode: Mode) {
   await installDesktopFixture(page, { projects: [] });
   await page.goto('/');
   await page.evaluate(mode => {
     type Json = Record<string, unknown>;
-    const target = window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Json) => Promise<unknown> }; __UPDATE_TEST_CALLS__: string[]; __UPDATE_TEST_REJECT__: () => void };
+    const target = window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Json) => Promise<unknown> };
+      __UPDATE_TEST_CALLS__: string[];
+      __UPDATE_TEST_CHECK_ARGS__: Json[];
+      __UPDATE_TEST_REJECT__: () => void;
+    };
     const original = target.__TAURI_INTERNALS__.invoke.bind(target.__TAURI_INTERNALS__);
-    const calls: string[] = []; target.__UPDATE_TEST_CALLS__ = calls;
+    const calls: string[] = [];
+    const checkArgs: Json[] = [];
+    target.__UPDATE_TEST_CALLS__ = calls;
+    target.__UPDATE_TEST_CHECK_ARGS__ = checkArgs;
     target.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
       if (cmd === 'plugin:updater|check') {
         calls.push(cmd);
+        checkArgs.push(args);
         if (mode === 'error') throw new Error('TEST_FIXTURE update endpoint unavailable');
         if (mode === 'slow-error') return new Promise((_resolve, reject) => { target.__UPDATE_TEST_REJECT__ = () => reject(new Error('TEST_FIXTURE delayed check failed')); });
         return mode === 'current' ? null : { rid: 31, currentVersion: '0.3.1', version: '0.3.2', rawJson: {} };
@@ -21,12 +30,15 @@ async function updateFixture(page: Page, mode: Mode) {
         calls.push(cmd); if (mode === 'download-error') throw new Error('TEST_FIXTURE signature verification failed'); return 32;
       }
       if (cmd === 'plugin:updater|install' && mode === 'install-error') { calls.push(cmd); throw new Error('TEST_FIXTURE installation failed'); }
+      if (cmd === 'plugin:process|restart' && mode === 'restart-error') { calls.push(cmd); throw new Error('TEST_FIXTURE restart failed'); }
       if (cmd === 'prepare_app_update' || cmd === 'cancel_app_update' || cmd === 'plugin:updater|install' || cmd === 'plugin:process|restart' || cmd === 'plugin:resources|close') { calls.push(cmd); return null; }
       return original(cmd, args);
     };
   }, mode);
 }
 const calls = (page: Page) => page.evaluate(() => (window as unknown as { __UPDATE_TEST_CALLS__: string[] }).__UPDATE_TEST_CALLS__);
+const checkArgs = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __UPDATE_TEST_CHECK_ARGS__: Array<{ headers?: Array<[string, string]> }> }).__UPDATE_TEST_CHECK_ARGS__);
 
 test('startup check announces an update without installing it', async ({ page }) => {
   await updateFixture(page, 'available');
@@ -134,4 +146,39 @@ test('a failed install releases the backend update guard', async ({ page }) => {
   await panel.getByRole('button', { name: '下载并安装' }).click();
   await expect(panel).toContainText('安装失败');
   expect(await calls(page)).toEqual(['plugin:updater|check', 'plugin:updater|download', 'prepare_app_update', 'plugin:updater|install', 'cancel_app_update']);
+});
+
+test('manual checks send cache-bypass headers while background checks do not', async ({ page }) => {
+  await updateFixture(page, 'current');
+  await expect.poll(() => calls(page), { timeout: 7000 }).toEqual(['plugin:updater|check']);
+  expect((await checkArgs(page))[0]?.headers).toBeUndefined();
+  await page.getByRole('button', { name: '检查更新' }).click();
+  await expect(page.getByRole('region', { name: '应用更新' })).toContainText('当前已是最新版本');
+  const args = await checkArgs(page);
+  expect(args).toHaveLength(2);
+  expect(args[1]?.headers).toEqual(
+    expect.arrayContaining([
+      ['cache-control', 'no-cache'],
+      ['pragma', 'no-cache'],
+    ]),
+  );
+});
+
+test('an installed update awaiting manual restart blocks redundant checks', async ({ page }) => {
+  await updateFixture(page, 'restart-error');
+  await page.getByRole('button', { name: '检查更新' }).click();
+  const panel = page.getByRole('region', { name: '应用更新' });
+  await panel.getByRole('button', { name: '下载并安装' }).click();
+  await expect(panel).toContainText('更新已安装，但未能自动重启');
+  const trigger = page.getByRole('button', { name: '待重启更新' });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await expect(panel).toBeHidden();
+  await trigger.click();
+  await expect(panel).toContainText('更新已安装，但未能自动重启');
+  expect(await calls(page)).toEqual(['plugin:updater|check', 'plugin:updater|download', 'prepare_app_update', 'plugin:updater|install', 'plugin:process|restart']);
+  await page.getByRole('button', { name: /设置与连接/ }).click();
+  const settings = page.getByRole('dialog', { name: '设置与连接' });
+  await settings.getByRole('button', { name: '版本与控制' }).click();
+  await expect(settings.getByRole('region', { name: '检查应用更新' }).getByRole('button', { name: '检查更新', exact: true })).toBeDisabled();
 });

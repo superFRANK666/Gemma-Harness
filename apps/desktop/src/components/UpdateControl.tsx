@@ -30,6 +30,7 @@ export function useAppUpdates(
   const [progress, setProgress] = useState<number | null>(null);
   const updateRef = useRef<Update | null>(null);
   const downloadedRef = useRef(false);
+  const installedRef = useRef(false);
   const checkingRef = useRef(false);
   const showCheckRef = useRef(false);
   const workingRef = useRef(false);
@@ -38,7 +39,9 @@ export function useAppUpdates(
   callbacksRef.current = { beginInstall, endInstall };
 
   const checkForUpdate = useCallback(async (manual: boolean) => {
-    if (!desktop || workingRef.current || (!manual && updateRef.current)) return;
+    if (!desktop || workingRef.current || installedRef.current || (!manual && updateRef.current)) {
+      return;
+    }
     if (manual) {
       showCheckRef.current = true;
       setOpen(true);
@@ -48,7 +51,13 @@ export function useAppUpdates(
     if (checkingRef.current) return;
     checkingRef.current = true;
     try {
-      const update = await check({ timeout: 15000 });
+      // Bypass intermediate HTTP/proxy caches when the user explicitly checks for updates.
+      const update = await check({
+        timeout: 15000,
+        ...(manual
+          ? { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } }
+          : {}),
+      });
       if (!mountedRef.current) {
         if (update) await update.close().catch(() => {});
         return;
@@ -110,6 +119,7 @@ export function useAppUpdates(
       prepared = true;
       await update.install();
       installed = true;
+      installedRef.current = true;
       await relaunch();
       if (mountedRef.current) {
         setPhase('installed');
@@ -282,7 +292,9 @@ export default function UpdateControl({ update }: { update: UpdateController }) 
           ? '发现更新'
           : phase === 'downloading'
             ? '正在下载更新'
-            : '检查更新'}
+            : phase === 'installed'
+              ? '待重启更新'
+              : '检查更新'}
       </button>
       {open && (
         <section className="update-panel" aria-label="应用更新" role="region">
@@ -358,7 +370,8 @@ export function VersionControl({ update }: { update: UpdateController }) {
               disabled={
                 update.phase === 'checking' ||
                 update.phase === 'downloading' ||
-                update.phase === 'installing'
+                update.phase === 'installing' ||
+                update.phase === 'installed'
               }
               onClick={() => void update.checkForUpdate(true)}
             >
