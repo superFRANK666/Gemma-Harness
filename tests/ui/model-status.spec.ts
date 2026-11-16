@@ -33,7 +33,7 @@ test('model status follows saved configuration without claiming a live connectio
   await status.getByRole('button', { name: '查看模型设置' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: '第二服务' }).click();
-  await dialog.getByRole('radio', { name: '作为默认连接' }).check();
+  await dialog.getByRole('radio', { name: '作为默认模型' }).check();
   await dialog.getByRole('button', { name: '保存设置' }).click();
   await expect(status).toContainText('other-provider/actual-model-id');
   await expect(status).toContainText('连接：第二服务');

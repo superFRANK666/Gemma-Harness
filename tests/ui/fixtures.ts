@@ -44,7 +44,7 @@ export interface FixtureOptions {
 export async function installDesktopFixture(page: Page, options: FixtureOptions = {}) {
   await page.addInitScript(({ initialConfig, initialProjects, initialSessions, discovery, diagnosis, streamEvents }) => {
     const calls: { cmd: string; args: Record<string, unknown> }[] = [];
-    const state = { config: structuredClone(initialConfig), sessions: structuredClone(initialSessions) as Record<string, unknown>[], projects: initialProjects ? structuredClone(initialProjects) : undefined };
+    const state = { config: structuredClone(initialConfig), sessions: structuredClone(initialSessions) as Record<string, unknown>[], projects: initialProjects ? structuredClone(initialProjects) : undefined, engineRunning: false };
     const callbacks = new Map<number, (message: unknown) => void>();
     let nextCallback = 1;
     Object.defineProperty(window, 'isTauri', { value: true, configurable: true });
@@ -70,7 +70,7 @@ export async function installDesktopFixture(page: Page, options: FixtureOptions 
         if (cmd !== 'command') throw new Error(`Unmocked test IPC command: ${cmd}`);
         const request = args.request as Record<string, unknown>;
         switch (request.action) {
-          case 'snapshot': return structuredClone({ ...state, engine: { running: false }, platform: 'windows', arch: 'x86_64', dataDir: 'TEST_FIXTURE', activeSessions: [] });
+          case 'snapshot': return structuredClone({ config: state.config, sessions: state.sessions, projects: state.projects, engine: { running: state.engineRunning }, platform: 'windows', arch: 'x86_64', dataDir: 'TEST_FIXTURE', activeSessions: [] });
           case 'save_settings': {
             state.config = structuredClone(request.config) as typeof initialConfig;
             state.config.connections.forEach(connection => { delete connection.apiKey; });
@@ -97,7 +97,29 @@ export async function installDesktopFixture(page: Page, options: FixtureOptions 
           }
           case 'discover': return structuredClone(discovery);
           case 'diagnose': return structuredClone(diagnosis);
-          case 'engine_start': return { running: true, source: 'test_fixture' };
+          case 'engine_status': return { running: state.engineRunning, source: 'test_fixture' };
+          case 'engine_stop': state.engineRunning = false; return { running: false, source: 'test_fixture' };
+          case 'engine_start': {
+            state.engineRunning = true;
+            const engineCfg = (request.config || {}) as Record<string, unknown>;
+            const ctx = typeof engineCfg.contextLength === 'number' ? engineCfg.contextLength : 8192;
+            const port = typeof engineCfg.port === 'number' ? engineCfg.port : 1235;
+            let managed = state.config.connections.find(c => c.id === 'managed-llama');
+            if (!managed) {
+              managed = { id: 'managed-llama', name: '本地模型', baseUrl: `http://127.0.0.1:${port}`, protocol: 'chat_completions', model: 'gemma-local', contextLength: ctx };
+              state.config.connections.push(managed);
+            }
+            managed.baseUrl = `http://127.0.0.1:${port}`;
+            managed.protocol = 'chat_completions';
+            managed.model = 'gemma-local';
+            managed.contextLength = ctx;
+            managed.backend = 'llama_cpp';
+            managed.modelFamily = 'auto';
+            managed.thinkingMode = 'auto';
+            if (managed.maxOutputTokens && managed.maxOutputTokens > ctx / 2) managed.maxOutputTokens = null;
+            state.config.selectedConnectionId = 'managed-llama';
+            return { running: true, source: 'test_fixture' };
+          }
           case 'restore_deleted_file': return { restored: true, path: 'old.txt' };
           case 'load_session': return { events: [] };
           case 'host_status': return { running: false, status: 'not_started', source: 'test_fixture' };

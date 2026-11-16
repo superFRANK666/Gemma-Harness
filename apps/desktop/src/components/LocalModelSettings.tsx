@@ -27,7 +27,7 @@ export default function LocalModelSettings({ config, backend, busy, status, resu
     </fieldset>
     {!config.binaryPath && <p className="local-model-hint">首次使用请展开高级设置安装引擎，或选择已有的 llama-server。</p>}
     <div className="action-row"><button className="primary-button" disabled={!!busy || !status || running || !config.binaryPath || !config.modelPath} onClick={onStart}>{busy === 'start-engine' ? <Loader2 className="spin" size={14} /> : <Cpu size={14} />}启动推理</button><button className="secondary-button" disabled={!!busy || !running} onClick={onStop}>停止推理</button><button className="secondary-button" disabled={!!busy || !config.modelPath} onClick={onInspect}>检查模型元数据</button><button className="secondary-button" disabled={!!busy} onClick={onLog}>查看日志</button></div>
-    {result && <details className="diagnostic-report"><summary><ShieldCheck size={14} />引擎操作结果</summary><pre>{pretty(result)}</pre></details>}
+    {result && <details className="diagnostic-report" open><summary><ShieldCheck size={14} />引擎操作结果</summary><pre>{pretty(result)}</pre></details>}
   </section>;
 }
 function EnginePath({ field, label, placeholder, value, onChange, onPath }: { field: PathField; label: string; placeholder: string; value: string; onChange: Props['onChange']; onPath: Props['onPath'] }) {

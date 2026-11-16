@@ -32,8 +32,7 @@ test('all settings tabs render in browser preview without claiming backend succe
   await page.getByRole('button', { name: /设置与连接/ }).click();
   const dialog = page.getByRole('dialog', { name: '设置与连接', exact: true });
   const checks = [
-    { tab: '模型连接', text: '实际加载上下文', image: 'settings-models' },
-    { tab: '本地引擎', text: '模型 GGUF 文件', image: 'settings-engine' },
+    { tab: '模型与推理', text: '实际加载上下文', image: 'settings-models' },
     { tab: '执行设备', text: '一次性配对串', image: 'settings-devices' },
     { tab: '工具与扩展', text: '原生桌面控制', image: 'settings-tools' },
     { tab: '版本与控制', text: '桌面应用中可查看', image: 'settings-version' },
@@ -43,6 +42,11 @@ test('all settings tabs render in browser preview without claiming backend succe
     await expect(dialog.getByRole('heading', { level: 2 })).toHaveText(check.tab);
     await expect(dialog.getByText(check.text, { exact: false }).first()).toBeVisible();
     await screenshot(page, check.image);
+    if (check.tab === '模型与推理') {
+      await dialog.getByRole('button', { name: /加载本地模型/ }).click();
+      await expect(dialog.getByText('模型 GGUF 文件', { exact: false }).first()).toBeVisible();
+      await screenshot(page, 'settings-engine');
+    }
   }
   await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('请在桌面应用中使用此功能');
@@ -57,8 +61,8 @@ test('discovery uses the actual provider response shape and loaded instance cont
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: '发现模型', exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: '模型 ID', exact: true })).toHaveValue('gemma-heretic-i1');
-  await expect(dialog.getByRole('spinbutton', { name: /实际加载上下文/ })).toHaveValue('12288');
-  await expect(dialog.getByRole('spinbutton', { name: /实际加载上下文/ })).not.toHaveValue('262144');
+  await expect(dialog.getByRole('combobox', { name: '上下文长度' })).toContainText('12K · 12,288 token');
+  await expect(dialog.getByRole('combobox', { name: '上下文长度' })).not.toContainText('256K');
   await expect(dialog.locator('.discovered-models button')).toHaveCount(1);
 });
 
@@ -73,7 +77,7 @@ test('an unloaded model does not substitute its theoretical context limit', asyn
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: '发现模型', exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: '模型 ID', exact: true })).toHaveValue('gemma-offline');
-  await expect(dialog.getByRole('spinbutton', { name: /实际加载上下文/ })).toHaveValue('8192');
+  await expect(dialog.getByRole('combobox', { name: '上下文长度' })).toContainText('8K · 8,192 token');
 });
 
 test('selecting a second loaded instance preserves its own id and context', async ({ page }) => {
@@ -94,7 +98,7 @@ test('selecting a second loaded instance preserves its own id and context', asyn
   await expect(dialog.locator('.discovered-models button')).toHaveCount(2);
   await dialog.locator('.discovered-models button').nth(1).click();
   await expect(dialog.getByRole('textbox', { name: '模型 ID', exact: true })).toHaveValue('gemma-instance-b');
-  await expect(dialog.getByRole('spinbutton', { name: /实际加载上下文/ })).toHaveValue('16384');
+  await expect(dialog.getByRole('combobox', { name: '上下文长度' })).toContainText('16K · 16,384 token');
 });
 
 test('failed diagnostics retain failed and untested capability states', async ({ page }) => {
@@ -135,7 +139,7 @@ test('remote inference and remote execution settings save as separate selections
   await workspace.fill('C:\\Projects\\Harness');
   await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const saved = (await ipcCalls(page)).find(call => (call.args.request as { action?: string })?.action === 'save_settings');
+  const saved = (await ipcCalls(page)).filter(call => (call.args.request as { action?: string })?.action === 'save_settings').at(-1);
   const savedConfig = (saved?.args.request as { config: typeof config }).config;
   expect(savedConfig.deviceId).toBe('windows-agent');
   expect(savedConfig.workspace).toBe('C:\\Projects\\Harness');
@@ -267,7 +271,7 @@ test('Gemma profile and thinking settings are saved together', async ({ page }) 
   await dialog.getByRole('combobox', { name: '思考模式' }).selectOption('on');
   await dialog.getByRole('spinbutton', { name: '单次最大输出 token' }).fill('3072');
   await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
-  const saved = (await ipcCalls(page)).find(call => (call.args.request as { action?: string })?.action === 'save_settings');
+  const saved = (await ipcCalls(page)).filter(call => (call.args.request as { action?: string })?.action === 'save_settings').at(-1);
   const connection = (saved?.args.request as { config: { connections: { modelFamily?: string; backend?: string; thinkingMode?: string; maxOutputTokens?: number | null }[] } }).config.connections[0];
   expect(connection.modelFamily).toBe('gemma4');
   expect(connection.backend).toBe('llama_cpp');
@@ -295,11 +299,11 @@ test('restarting the managed engine drops stale model settings and oversized out
   await page.goto('/');
   await page.getByRole('button', { name: /设置与连接/ }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: '本地引擎', exact: true }).click();
+  await dialog.getByRole('button', { name: '内置 llama.cpp' }).click();
   await dialog.getByRole('button', { name: '启动推理', exact: true }).click();
   await expect(dialog.locator('.diagnostic-report')).toContainText('test_fixture');
   await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
-  const saved = (await ipcCalls(page)).find(call => (call.args.request as { action?: string })?.action === 'save_settings');
+  const saved = (await ipcCalls(page)).filter(call => (call.args.request as { action?: string })?.action === 'save_settings').at(-1);
   const managed = (saved?.args.request as { config: { connections: { id: string; modelFamily?: string; thinkingMode?: string; maxOutputTokens?: number | null }[] } }).config.connections.find(c => c.id === 'managed-llama');
   expect(managed?.modelFamily).toBe('auto');
   expect(managed?.thinkingMode).toBe('auto');
@@ -313,7 +317,8 @@ test('managed engine passes an explicitly selected chat template', async ({ page
   await page.goto('/');
   await page.getByRole('button', { name: /设置与连接/ }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: '本地引擎', exact: true }).click();
+  await dialog.getByRole('button', { name: /加载本地模型/ }).click();
+  await dialog.getByText('本地运行高级设置').click();
   await dialog.getByRole('textbox', { name: /自定义聊天模板 · 可选/ }).fill('/fixture/gemma4.jinja');
   await dialog.getByRole('button', { name: '启动推理', exact: true }).click();
   await expect.poll(async () => (await ipcCalls(page)).some(call => (call.args.request as { action?: string })?.action === 'engine_start')).toBe(true);

@@ -108,7 +108,7 @@ test('system theme follows live changes and restores its listener after closing 
 test('mixed appearance and model edits use full configuration save', async ({ page }) => {
   await appearanceFixture(page); const dialog = await openAppearance(page);
   await dialog.getByRole('button', { name: '琥珀', exact: true }).click();
-  await dialog.getByRole('button', { name: '模型连接', exact: true }).click(); await dialog.getByLabel('服务地址', { exact: true }).fill('http://127.0.0.1:4321');
+  await dialog.getByRole('button', { name: '模型与推理', exact: true }).click(); await dialog.getByLabel('服务地址', { exact: true }).fill('http://127.0.0.1:4321');
   await dialog.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await actionCalls(page, 'save_appearance')).toHaveLength(0);
   const request = (await actionCalls(page, 'save_settings'))[0].args.request as { config: Config };
