@@ -64,6 +64,29 @@ pub fn continuation_projection(
     projection.extend_from_slice(retained);
     projection
 }
+
+/// A long ongoing turn may be split between complete tool batches. Keep its
+/// actual user message (including current images) alongside the recent results;
+/// only immutable user history supplies the constraints in the ledger.
+pub fn continuation_from_split(
+    user_history: &[String],
+    messages: &[ChatMessage],
+    split: usize,
+    summary: &str,
+) -> Vec<ChatMessage> {
+    let mut retained = Vec::new();
+    if !messages[split..].iter().any(|m| m.role == "user") {
+        if let Some(current) = messages[..split].iter().rev().find(|m| {
+            user_message_text(m)
+                .as_ref()
+                .is_some_and(|text| user_history.last() == Some(text))
+        }) {
+            retained.push(current.clone());
+        }
+    }
+    retained.extend_from_slice(&messages[split..]);
+    continuation_projection(user_history, &retained, summary)
+}
 // Conservative UTF-8 byte estimate. This is intentionally labelled an estimate,
 // not exact Gemma tokenization. Tool definitions and image allowance are included.
 pub fn estimate(messages: &[ChatMessage], tools: &Value) -> usize {
@@ -269,7 +292,8 @@ pub fn drop_old_images(messages: &mut [ChatMessage]) {
         }
     }
 }
-// Preserve whole user turns: never cut a tool call away from its result.
+// Prefer whole turns, but also reclaim old batches inside a long ongoing turn.
+// Never cut a tool call away from its result; retain the latest two batches.
 pub fn split_for_compaction(messages: &[ChatMessage]) -> Option<usize> {
     let boundaries: Vec<usize> = messages
         .iter()
@@ -277,9 +301,8 @@ pub fn split_for_compaction(messages: &[ChatMessage]) -> Option<usize> {
         .filter(|(_, m)| m.role == "user")
         .map(|(i, _)| i)
         .collect();
-    if boundaries.len() >= 2 {
-        return Some(boundaries[boundaries.len().saturating_sub(2).max(1)]);
-    }
+    let turn_split = (boundaries.len() >= 2)
+        .then(|| boundaries[boundaries.len().saturating_sub(2).max(1)]);
     let mut complete = Vec::new();
     let mut i = 0;
     while i < messages.len() {
@@ -302,11 +325,16 @@ pub fn split_for_compaction(messages: &[ChatMessage]) -> Option<usize> {
             complete.push((start, i));
         }
     }
-    match complete.len() {
+    let tool_split = match complete.len() {
         0 => None,
         1 => Some(complete[0].1),
         2 => Some(complete[1].0),
         n => Some(complete[n - 2].0),
+    };
+    match (turn_split, tool_split) {
+        (Some(turn), Some(tool)) if complete.len() >= 3 => Some(turn.max(tool)),
+        (Some(turn), _) => Some(turn),
+        (None, tool) => tool,
     }
 }
 
