@@ -227,7 +227,16 @@ impl Harness {
         let tool_budget =
             context::input_budget_for(connection.context_length, connection.output_budget()) / 2;
         if context::estimate(&[], &json!(base_definitions)).saturating_sub(256) > tool_budget {
-            active_names.retain(|name| name == "tool_search");
+            // A small terminal schema avoids a discovery round for common local
+            // inspections. Permissions were already applied to definitions.
+            active_names.retain(|name| matches!(name.as_str(), "tool_search" | "terminal_run"));
+            let minimal: Vec<&Value> = definitions
+                .iter()
+                .filter(|d| active_names.contains(d["name"].as_str().unwrap_or("")))
+                .collect();
+            if context::estimate(&[], &json!(minimal)).saturating_sub(256) > tool_budget {
+                active_names.retain(|name| name == "tool_search");
+            }
         }
         let mut base_names = active_names.clone();
         for d in &definitions {
@@ -288,9 +297,14 @@ impl Harness {
                 "For multi-step work, discover task_checkpoint with tool_search to retain the objective, evidence and next action. Wait for prior results before dependent calls."
             };
             let system = format!(
-                "{SYSTEM}\n{workflow}\nExecution device: {}. Workspace: {}.\nRespect user instructions in chronological order; later explicit corrections supersede earlier ones.{}",
+                "{SYSTEM}\n{workflow}\nExecution device: {}. Workspace: {}.{}\nRespect user instructions in chronological order; later explicit corrections supersede earlier ones.{}",
                 session.device_id,
                 session.workspace,
+                if session.device_id == "local" {
+                    format!(" Operating system: {}. Architecture: {}.", std::env::consts::OS, std::env::consts::ARCH)
+                } else {
+                    String::new()
+                },
                 if connection.resolved_family() == "gemma4" {
                     " For a focused change to an existing file, prefer file_apply_patch with exact old and new text so unrelated bytes and line endings are preserved. After reading a file this turn, omit version fields in file_apply_patch; after reading or inspecting it, omit them in file_delete. Harness binds the verified version. Never invent a token."
                 } else {
@@ -378,9 +392,6 @@ impl Harness {
                     "Earlier assistant and tool details were omitted to fit the context. All original user instructions and recent results are retained. Use history_search or saved artifacts for missing evidence; do not replay completed operations or infer unobserved results.",
                 );
                 let mut compacted_estimate = estimate_projection(&compacted);
-                if compacted_estimate >= conservative_estimate {
-                    bail!("保留用户要求和最近工具结果后仍无法缩减上下文；请扩大实际加载上下文、减少附件或缩小本轮任务。完整历史已保留，已完成操作不会重放。")
-                }
                 let event = json!({"type":"compaction_started","estimatedTokens":estimate,"budget":budget});
                 self.store.append(id, "activity", &event)?;
                 sink(event);
@@ -391,35 +402,50 @@ impl Harness {
                         calibration.raw_budget(estimated_budget),
                     )?;
                     summary_input.push(message("user", json!(bounded)));
-                    if calibration.apply(context::estimate(&summary_input, &json!([]))) > estimated_budget {
+                    if calibration.apply(context::estimate(&summary_input, &json!([])))
+                        > estimated_budget
+                    {
                         bail!("Summary input exceeds the context budget")
                     }
-                    let (_permit, _) = self.acquire_inference(&connection, &cancel, Some(&sink)).await?;
+                    let (_permit, _) = self
+                        .acquire_inference(&connection, &cancel, Some(&sink))
+                        .await?;
                     collect_text(
                         provider.clone(),
                         summary_input,
-                        if connection.resolved_family() == "gemma4" && connection.thinking_mode != "off" {
+                        if connection.resolved_family() == "gemma4"
+                            && connection.thinking_mode != "off"
+                        {
                             output_tokens
                         } else {
                             1024.min(output_tokens)
                         },
                         cancel.clone(),
-                    ).await
-                }.await;
+                    )
+                    .await
+                }
+                .await;
                 if cancel.is_cancelled() {
                     bail!("已停止")
                 }
                 let mut method = "history_reduction";
                 if let Ok(summary) = summary_result {
                     if !summary.trim().is_empty() {
-                        let candidate = context::continuation_from_split(&user_history, &messages, split, &summary);
+                        let candidate = context::continuation_from_split(
+                            &user_history, &messages, split, &summary,
+                        );
                         let candidate_estimate = estimate_projection(&candidate);
-                        if candidate_estimate < conservative_estimate && candidate_estimate <= estimated_budget {
+                        if candidate_estimate < conservative_estimate
+                            && candidate_estimate <= estimated_budget
+                        {
                             compacted = candidate;
                             compacted_estimate = candidate_estimate;
                             method = "model_summary";
                         }
                     }
+                }
+                if compacted_estimate >= conservative_estimate {
+                    bail!("保留用户要求和最近工具结果后仍无法缩减上下文；请扩大实际加载上下文、减少附件或缩小本轮任务。完整历史已保留，已完成操作不会重放。")
                 }
                 // Compare like-for-like estimates, and keep the deterministic
                 // reduction if a summary fails, grows history or cannot fit.
@@ -739,7 +765,10 @@ impl Harness {
                             json!({"isError":true,"notExecuted":true,"error":"A prior tool failed; remaining calls were not executed. Inspect the failure and replan dependent work."})
                         } else if call.function.name == "terminal_run"
                             && args["command"].as_str().is_some_and(|command| {
-                                empty_terminal_calls.get(command.trim()).copied().unwrap_or(0) >= 2
+                                empty_terminal_calls
+                                    .get(command.trim())
+                                    .copied()
+                                    .unwrap_or(0) >= 2
                             })
                         {
                             empty_terminal_blocks += 1;
@@ -1085,7 +1114,14 @@ impl Harness {
                         result["empty_output"] = json!(true);
                         if let Ok(args) = serde_json::from_str::<Value>(&call.function.arguments) {
                             if let Some(command) = args["command"].as_str() {
-                                *empty_terminal_calls.entry(command.trim().to_owned()).or_default() += 1;
+                                let command = command.trim();
+                                // A different silent command may itself change
+                                // state; count repeated executions, not all silent
+                                // operations across an entire task.
+                                if !empty_terminal_calls.contains_key(command) {
+                                    empty_terminal_calls.clear();
+                                }
+                                *empty_terminal_calls.entry(command.to_owned()).or_default() += 1;
                             }
                         }
                         result["harness_progress_hint"] = json!("Exit code 0, but stdout and stderr are empty. If information was expected, check supported arguments/help or change the observation. Repeating this command or reading its empty artifacts will not provide the missing information.");
@@ -1140,9 +1176,9 @@ impl Harness {
                         Some((call.function.name.clone(), arguments, observation, count));
                     if count == 3 {
                         result["harness_progress_hint"] = json!("The same read-only call returned unchanged results three times. If intentionally polling, continue as needed; otherwise use a different observation or conclude from available evidence.");
-                        sink(
-                            json!({"type":"loop_guard","reason":"repeated_unchanged_observation","action":"advice_only"}),
-                        );
+                        let event = json!({"type":"loop_guard","reason":"repeated_unchanged_observation","action":"advice_only"});
+                        self.store.append(id, "activity", &event)?;
+                        sink(event);
                     }
                 } else {
                     last_observation = None;
@@ -1172,13 +1208,10 @@ impl Harness {
                 let content = if let Some(text) = raw_text {
                     json!(text)
                 } else {
-                    let model_result = if call.function.name == "terminal_run" {
-                        terminal_model_result(&result)
-                    } else {
-                        result.clone()
-                    };
+                    let model_result = (call.function.name == "terminal_run")
+                        .then(|| terminal_model_result(&result));
                     tool_content(
-                        &model_result,
+                        model_result.as_ref().unwrap_or(&result),
                         6000,
                         full_artifact.as_deref(),
                         artifact_error.as_deref(),
@@ -1258,7 +1291,9 @@ impl Harness {
                 corrections = 0;
             }
             if repeated_failure {
-                sink(json!({"type":"loop_guard","reason":"repeated_tool_failure"}));
+                let event = json!({"type":"loop_guard","reason":"repeated_tool_failure"});
+                self.store.append(id, "activity", &event)?;
+                sink(event);
                 bail!("相同工具和参数已重复失败三次，本轮停止以避免无效循环；请检查错误或调整方法后继续")
             }
             if empty_terminal_blocks >= 2 {
@@ -1276,12 +1311,15 @@ fn terminal_model_result(result: &Value) -> Value {
         for stream in ["stdout", "stderr"] {
             let empty = result[format!("{stream}_bytes")] == 0;
             if empty && result["output_complete"] == true {
-                for suffix in ["artifact", "bytes", "saved_bytes", "artifact_truncated", "error"] {
+                for suffix in [
+                    "artifact", "bytes", "saved_bytes", "artifact_truncated", "error",
+                ] {
                     object.remove(&format!("{stream}_{suffix}"));
                 }
             }
         }
-        object.retain(|_, value| !value.is_null());
+        // A null exit code means abnormal termination, not missing metadata.
+        object.retain(|key, value| key == "exit_code" || !value.is_null());
     }
     projected
 }

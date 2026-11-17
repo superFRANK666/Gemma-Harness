@@ -75,12 +75,13 @@ pub fn continuation_from_split(
     summary: &str,
 ) -> Vec<ChatMessage> {
     let mut retained = Vec::new();
-    if !messages[split..].iter().any(|m| m.role == "user") {
-        if let Some(current) = messages[..split].iter().rev().find(|m| {
-            user_message_text(m)
-                .as_ref()
-                .is_some_and(|text| user_history.last() == Some(text))
-        }) {
+    let is_current_user = |m: &ChatMessage| {
+        user_message_text(m)
+            .as_ref()
+            .is_some_and(|text| user_history.last() == Some(text))
+    };
+    if !messages[split..].iter().any(is_current_user) {
+        if let Some(current) = messages[..split].iter().rev().find(|m| is_current_user(m)) {
             retained.push(current.clone());
         }
     }
