@@ -1,11 +1,11 @@
-## v0.3.7（2026-11-17）
+## v0.3.8（2026-11-17）
 
-- 修复内置终端命令环境与 Shell 调度：在 macOS／Linux 上优先使用用户 POSIX Shell（如 `$SHELL`），并合并登录 Shell、`PATH` 配置目录（`/etc/paths`、`/etc/paths.d`）及 Homebrew／用户工具链路径（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`、`~/.local/bin` 等），解决桌面应用从图形界面启动时找不到 `brew` 等命令行工具的问题（同步覆盖 Git 与 MCP 子进程）。
-- 修复内置终端输入框在 macOS WebKit 下的自动首字母大写、自动纠错与智能破折号／智能引号替换（如 `brew --config` 被改写为 `Brew —config`），并保留粘贴与输入法组合输入。
-- 在内置终端标题栏展示当前绑定的工作目录路径，并为 `streamTool` 增加结果 `stdout`／`stderr` 兜底渲染（当未收到流式分片时补齐输出且避免重复），提升命令反馈一致性。
-- 同步更新 macOS、Windows、Linux 安装包与签名更新清单至 0.3.7。
+- 优化小上下文场景的工具与输出预算：默认工具过多时按需发现，依据可用上下文限制工具页大小；在压缩历史之前优先回收固定模式开销并调整自动预留，保留用户明确指定的设置。
+- 完善内置推理引擎管理：区分加载中、就绪、无响应和已退出状态，在新一轮对话中按需启动已保存的托管配置，并在排队后重新检查就绪状态，避免将存活进程误认作模型可用或在崩溃后重放已完成的工具操作。
+- 改善本地模型连接和令牌计数兼容性：本机回环地址绕过代理并使用更短的连接超时；区分暂时性服务故障与连接、授权或取消错误，避免将暂时性故障永久记为不支持。设置页面同步改进状态显示和长错误信息换行。
+- 更新 macOS、Windows、Linux 安装包和签名更新清单至 0.3.8。
 
-本版在 Apple Silicon macOS 上完成了前端 `tsc -b`／`vite build`、72 项 Playwright UI 自动化测试、发布脚本测试（3 项），以及 `cargo fmt --check`、`cargo check -p harness-desktop`、`cargo clippy`、`harness-executor`、`harness-model`、`harness-remote`、`harness-core` 单元测试与 `manual_stream`／`projects` 集成测试；`agent_end_to_end` 中既有步骤上限断言测试（期待 48 与当前 `MAX_STEPS = 96` 不一致）未修改。三平台生产构建、安装包签名与更新清单校验以 GitHub Actions 发布流水线为准，Windows、Linux 与 Intel Mac 的真实设备安装与更新仍需分别验收。
+本次发布按要求未运行测试。已有 `agent_end_to_end` 步骤上限断言仍期望 48，而当前代码上限为 96，本次未执行该测试。三平台生产构建、安装包签名与更新清单校验结果以 GitHub Actions 发布流程为准；Windows、Linux 和 Intel Mac 的真实设备安装与更新，以及目标模型的实际效果仍需分别验收。
 
 ## 下载
 
