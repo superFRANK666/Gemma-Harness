@@ -231,16 +231,12 @@ pub fn input_budget(context: usize) -> usize {
     input_budget_for(context, reserve)
 }
 pub fn input_budget_for(context: usize, reserve: usize) -> usize {
-    context
-        .saturating_sub(reserve + context.div_ceil(5))
-        .max(256)
+    context.saturating_sub(reserve.saturating_add(context.div_ceil(5)))
 }
 /// A rendered, tokenized text prompt needs a smaller margin than the
 /// uncalibrated estimate, but still reserves space for runtime differences.
 pub fn measured_input_budget_for(context: usize, reserve: usize) -> usize {
-    context
-        .saturating_sub(reserve.saturating_add(context.div_ceil(20).max(256)))
-        .max(256)
+    context.saturating_sub(reserve.saturating_add(context.div_ceil(20).max(256)))
 }
 pub fn is_input_overflow(description: &str) -> bool {
     let lower = description.to_lowercase();
