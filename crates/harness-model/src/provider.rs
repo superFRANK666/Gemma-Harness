@@ -39,6 +39,9 @@ impl Provider {
         ) {
             bail!("Unsupported protocol; expected chat_completions, responses, or lmstudio");
         }
+        if config.context_length < 512 {
+            bail!("实际加载上下文至少需要 512 token；请检查模型连接的上下文设置");
+        }
         if !matches!(
             config.model_family.as_str(),
             "auto" | "gemma4" | "gemma3" | "gemma3n" | "functiongemma" | "other"
@@ -106,11 +109,17 @@ impl Provider {
             bail!("Provider URL must not contain credentials, query parameters, or a fragment; use the API key field");
         }
         base.set_path(base.path().trim_end_matches('/').to_owned().as_str());
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
+        let loopback = is_loopback(&base);
+        let mut client = Client::builder()
+            .connect_timeout(Duration::from_secs(if loopback { 2 } else { 10 }))
             .timeout(Duration::from_secs(600))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        // Local inference must not be sent to an OS or environment HTTP proxy.
+        // Remote providers retain the user's normal proxy configuration.
+        if loopback {
+            client = client.no_proxy();
+        }
+        let client = client.build()?;
         Ok(Self {
             config,
             client,
@@ -174,38 +183,107 @@ impl Provider {
         for parameter in self.omitted_optional_parameters.lock().unwrap().iter() {
             body.as_object_mut().unwrap().remove(parameter);
         }
+        enum MeasureFailure {
+            Cancelled(anyhow::Error),
+            Request(anyhow::Error),
+            Transient,
+            Unsupported,
+        }
+        async fn send_probe(
+            provider: &Provider,
+            builder: reqwest::RequestBuilder,
+            cancel: &CancellationToken,
+        ) -> std::result::Result<Vec<u8>, MeasureFailure> {
+            let response = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(MeasureFailure::Cancelled(anyhow!("Token counting cancelled"))),
+                result = builder.timeout(Duration::from_secs(4)).send() => match result {
+                    Ok(response) => response,
+                    Err(error) if error.is_connect() => {
+                        return Err(MeasureFailure::Request(provider.transport_error(error)));
+                    }
+                    Err(error) if error.is_timeout() => return Err(MeasureFailure::Transient),
+                    Err(_) => return Err(MeasureFailure::Unsupported),
+                },
+            };
+            let status = response.status();
+            if matches!(status.as_u16(), 401 | 403) {
+                return Err(MeasureFailure::Request(anyhow!(
+                    "推理服务拒绝访问（HTTP {}）；请检查 API 密钥和服务权限。",
+                    status.as_u16()
+                )));
+            }
+            if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(MeasureFailure::Transient);
+            }
+            if !response.status().is_success() {
+                return Err(MeasureFailure::Unsupported);
+            }
+            read_bounded(response, cancel, 16 * 1024 * 1024)
+                .await
+                .map_err(|error| {
+                    if cancel.is_cancelled() {
+                        MeasureFailure::Cancelled(error)
+                    } else {
+                        MeasureFailure::Transient
+                    }
+                })
+        }
         let measure = async {
             // Native template/tokenizer endpoints may target a server's default
             // model. Only claim an exact count when there is one matching model.
-            let response = tokio::select! { biased; _ = cancel.cancelled() => bail!("Token counting cancelled"), result = self.authorize(self.client.get(self.route("models"))).timeout(Duration::from_secs(4)).send() => result? };
-            if !response.status().is_success() { bail!("Model identity unavailable for tokenizer"); }
-            let bytes = read_bounded(response, cancel, 4 * 1024 * 1024).await?;
-            let models: Value = serde_json::from_slice(&bytes)?;
-            let models = models["data"].as_array().context("Model list missing data")?;
+            let bytes = send_probe(self, self.authorize(self.client.get(self.route("models"))), cancel)
+                .await?;
+            let models: Value =
+                serde_json::from_slice(&bytes).map_err(|_| MeasureFailure::Unsupported)?;
+            let models = models["data"]
+                .as_array()
+                .ok_or(MeasureFailure::Unsupported)?;
             if models.len() != 1 || models[0]["id"].as_str() != Some(self.config.model.as_str()) {
-                bail!("Tokenizer model identity is ambiguous");
+                return Err(MeasureFailure::Unsupported);
             }
-            let response = tokio::select! { biased; _ = cancel.cancelled() => bail!("Token counting cancelled"), result = self.authorize(self.client.post(self.native_route("apply-template"))).timeout(Duration::from_secs(4)).json(&body).send() => result? };
-            if !response.status().is_success() { bail!("Template counting unavailable"); }
-            let bytes = read_bounded(response, cancel, 8 * 1024 * 1024).await?;
-            let value: Value = serde_json::from_slice(&bytes)?;
-            let prompt = value["prompt"].as_str().context("Template response missing prompt")?;
+            let bytes = send_probe(
+                self,
+                self.authorize(self.client.post(self.native_route("apply-template")))
+                    .json(&body),
+                cancel,
+            )
+            .await?;
+            let value: Value =
+                serde_json::from_slice(&bytes).map_err(|_| MeasureFailure::Unsupported)?;
+            let prompt = value["prompt"]
+                .as_str()
+                .ok_or(MeasureFailure::Unsupported)?;
             let request = json!({"model":self.config.model,"content":prompt,"add_special":false,"parse_special":true});
-            let response = tokio::select! { biased; _ = cancel.cancelled() => bail!("Token counting cancelled"), result = self.authorize(self.client.post(self.native_route("tokenize"))).timeout(Duration::from_secs(4)).json(&request).send() => result? };
-            if !response.status().is_success() { bail!("Tokenizer unavailable"); }
-            let bytes = read_bounded(response, cancel, 16 * 1024 * 1024).await?;
-            let value: Value = serde_json::from_slice(&bytes)?;
-            let count = value["tokens"].as_array().context("Tokenizer response missing tokens")?.len();
-            if count == 0 { bail!("Tokenizer returned no tokens for a rendered prompt"); }
-            Ok::<_,anyhow::Error>(count)
-        }.await;
+            let bytes = send_probe(
+                self,
+                self.authorize(self.client.post(self.native_route("tokenize")))
+                    .json(&request),
+                cancel,
+            )
+            .await?;
+            let value: Value =
+                serde_json::from_slice(&bytes).map_err(|_| MeasureFailure::Unsupported)?;
+            let count = value["tokens"]
+                .as_array()
+                .ok_or(MeasureFailure::Unsupported)?
+                .len();
+            if count == 0 {
+                return Err(MeasureFailure::Unsupported);
+            }
+            Ok(count)
+        }
+        .await;
         match measure {
             Ok(count) => {
                 *self.tokenizer_available.lock().unwrap() = Some(true);
                 Ok(Some(count))
             }
-            Err(error) if cancel.is_cancelled() => Err(error),
-            Err(_) => {
+            Err(MeasureFailure::Cancelled(error) | MeasureFailure::Request(error)) => {
+                Err(anyhow!(self.safe_error(format!("{error:#}"))))
+            }
+            Err(MeasureFailure::Transient) => Ok(None),
+            Err(MeasureFailure::Unsupported) => {
                 *self.tokenizer_available.lock().unwrap() = Some(false);
                 Ok(None)
             }
@@ -230,6 +308,19 @@ impl Provider {
             message = message.chars().take(1000).collect::<String>() + "…";
         }
         message
+    }
+
+    fn transport_error(&self, error: reqwest::Error) -> anyhow::Error {
+        let guidance = if error.is_connect() && is_loopback(&self.base) {
+            "无法连接本机推理服务；请确认模型已加载、服务正在监听配置的端口。内置模型可在设置 → 模型与推理中查看状态和日志"
+        } else if error.is_connect() {
+            "无法连接推理服务；请检查服务地址、网络和代理设置"
+        } else if error.is_timeout() {
+            "推理请求超时；请检查服务负载、模型加载状态和可用内存后重试"
+        } else {
+            "推理请求未能完成；请检查服务状态和日志"
+        };
+        anyhow::Error::new(error).context(guidance)
     }
 
     fn request_body(
@@ -420,7 +511,7 @@ impl Provider {
             let response = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => bail!("Generation cancelled"),
-                response = request.send() => response.context("Could not connect to inference server")?,
+                response = request.send() => response.map_err(|error| self.transport_error(error))?,
             };
             let status = response.status();
             if status.is_success() {
@@ -1004,6 +1095,15 @@ fn validate_probe_arguments(call: &ToolCall, nonce: &str) -> Result<()> {
         bail!("Model did not return the exact probe schema, tool name and arguments");
     }
     Ok(())
+}
+
+fn is_loopback(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or_default();
+    host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn unsupported_optional_parameter(

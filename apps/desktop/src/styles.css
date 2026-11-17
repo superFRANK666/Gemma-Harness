@@ -2091,6 +2091,16 @@ pre code {
   white-space: pre-wrap;
 }
 
+.activity-note > span,
+.local-model-status small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-note > svg {
+  flex-shrink: 0;
+}
+
 .reasoning {
   color: var(--muted);
   font-size: calc(11px * var(--ui-font-scale));
