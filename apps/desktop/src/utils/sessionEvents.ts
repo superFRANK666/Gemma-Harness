@@ -38,6 +38,40 @@ export function modelRetryText(event: Json): string {
     : `本次生成达到输出上限，已在未执行新工具的前提下增加预算重试（${String(event.previousOutputTokens)} → ${String(event.outputTokens)} token）。`;
 }
 
+export function loopGuardText(event: Json): string {
+  if (typeof event.message === 'string' && event.message) return event.message;
+  if (event.reason === 'repeated_unchanged_observation') {
+    return '相同查询连续返回相同结果，已提醒模型调整方法。';
+  }
+  return '相同工具和参数重复失败，已停止本轮以避免无效循环。';
+}
+
+export function compactionText(event: Json): string {
+  const saved = savedTokens(event);
+  const label = event.historyOmitted === true
+    ? '已缩减上下文，保留用户要求和最近结果；较早的工具细节可从历史查询'
+    : '已整理上下文';
+  return `${label}${saved !== undefined ? ` · 节省约 ${saved.toLocaleString()} token` : ''} · 完整历史保留在本地`;
+}
+
+export function terminalHasEmptyOutput(result: Json): boolean {
+  return result.notExecuted !== true && result.cancelled !== true && result.timed_out !== true
+    && result.isError !== true && result.exit_code === 0 && result.output_complete === true
+    && (result.empty_output === true
+      || (result.stdout_bytes === 0 && result.stderr_bytes === 0)
+      || (result.stdout === '' && result.stderr === ''));
+}
+
+export function terminalCommand(raw?: string): string {
+  if (!raw) return '';
+  try {
+    const args = JSON.parse(raw);
+    return typeof args?.command === 'string' ? args.command : '';
+  } catch {
+    return '';
+  }
+}
+
 export function prettyArgs(raw?: string): string {
   if (!raw) return '';
   try {
@@ -88,6 +122,14 @@ export function findLastToolIndex(list: Activity[], callId: unknown): number {
 
 export function terminalResultNotices(result: Json, truncated: boolean): string[] {
   const notices: string[] = [];
+  if (result.notExecuted === true) {
+    return [result.loop_guard === 'repeated_empty_terminal_output'
+      ? '[重复调用已拦截：该命令已两次返回空输出，本次未执行]'
+      : '[本次命令未执行，请查看工具详情]'];
+  }
+  if (terminalHasEmptyOutput(result)) {
+    notices.push('[命令已结束，退出码 0；标准输出和标准错误均为空。如需查询信息，请检查命令参数或改用其他方式。]');
+  }
   if (result.cancelled === true) notices.push('[命令已中断]');
   if (result.timed_out === true) notices.push('[命令超时]');
   if (result.cancelled !== true && result.timed_out !== true) {
@@ -97,7 +139,7 @@ export function terminalResultNotices(result: Json, truncated: boolean): string[
       notices.push('[命令异常结束，没有退出码]');
     }
   }
-  const incomplete = result.output_complete === false || result.isError === true;
+  const incomplete = result.output_complete === false;
   if (incomplete) {
     notices.push('[命令输出采集不完整]');
     for (const key of ['stdout_error', 'stderr_error'] as const) {
@@ -159,6 +201,7 @@ export function buildActivitiesFromEvents(
         method: String(p.method || ''),
         savedTokens: savedTokens(p),
       };
+      list.push({ id: crypto.randomUUID(), role: 'status', text: compactionText(p) });
     }
 
     if (event.kind === 'message' && (p.role === 'user' || p.role === 'assistant')) {
@@ -185,6 +228,8 @@ export function buildActivitiesFromEvents(
       });
     } else if (event.kind === 'activity' && p.type === 'model_retry') {
       list.push({ id: crypto.randomUUID(), role: 'status', text: modelRetryText(p) });
+    } else if (event.kind === 'activity' && p.type === 'loop_guard') {
+      list.push({ id: crypto.randomUUID(), role: 'status', text: loopGuardText(p) });
     } else if (event.kind === 'activity' && p.type === 'capability_warning') {
       list.push({ id: crypto.randomUUID(), role: 'status', text: String(p.message || '') });
     } else if (event.kind === 'activity' && p.type === 'manual_file_restore_started') {

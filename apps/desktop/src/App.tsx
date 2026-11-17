@@ -20,9 +20,11 @@ import WelcomeView from './components/WelcomeView';
 import {
   basename,
   buildActivitiesFromEvents,
+  compactionText,
   findLastToolIndex,
   HISTORY_WINDOW,
   LIVE_TRUNCATION_NOTICE,
+  loopGuardText,
   metricKey,
   modelRetryText,
   savedTokens,
@@ -613,7 +615,9 @@ export default function App() {
         setDiffResult(null);
       }
       if (event.name === 'terminal_run') {
-        setTerminal(old => (old ?? '') + '\n[命令结束，详细结果保存在工具卡片]\n');
+        const notices = terminalResultNotices((event.result ?? {}) as Json, false);
+        setTerminal(old => (old ?? '') + '\n' + (notices.length > 0
+          ? notices.join('\n') : '[命令结束，详细结果保存在工具卡片]') + '\n');
       }
     } else if (type === 'context_usage' || type === 'usage') {
       setUsage(u => applyUsage(u, event));
@@ -672,9 +676,7 @@ export default function App() {
         {
           id: crypto.randomUUID(),
           role: 'status',
-          text: `已整理上下文${
-            saved !== undefined ? ` · 节省约 ${saved.toLocaleString()} token` : ''
-          } · 完整历史保留在本地`,
+          text: compactionText(event),
         },
       ]);
     } else if (type === 'provider_error') {
@@ -688,7 +690,11 @@ export default function App() {
         },
       ]);
     } else if (type === 'loop_guard') {
-      setStatus('触发重复失败保护');
+      setStatus(event.action === 'advice_only' ? '正在调整查询方法' : '已拦截无效重复调用');
+      setActivities(old => [
+        ...old,
+        { id: crypto.randomUUID(), role: 'status', text: loopGuardText(event) },
+      ]);
     } else if (type === 'error') {
       notify(event.message);
       setActivities(old => [

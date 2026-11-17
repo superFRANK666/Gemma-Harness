@@ -5,13 +5,16 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { pretty } from '../bridge';
 import type { Activity, Json } from '../types';
-import { prettyArgs } from '../utils/sessionEvents';
+import { prettyArgs, terminalCommand, terminalHasEmptyOutput, terminalResultNotices } from '../utils/sessionEvents';
 import { Mark } from './Mark';
 
-type ToolTone = 'running' | 'error' | 'warn' | 'done';
+type ToolTone = 'running' | 'error' | 'warn' | 'done' | 'empty';
 
 function toolState(item: Activity): { label: string; tone: ToolTone } {
   const result = item.result as Json | undefined;
+  if (result?.notExecuted) {
+    return { label: result.loop_guard ? '重复调用已拦截' : '未执行', tone: 'warn' };
+  }
   if (result?.indeterminate) return { label: '结果待确认', tone: 'warn' };
   if (result?.cancelled) return { label: '已停止', tone: 'warn' };
   if (result?.timed_out) return { label: '已超时', tone: 'error' };
@@ -23,6 +26,9 @@ function toolState(item: Activity): { label: string; tone: ToolTone } {
     return { label: '执行失败', tone: 'error' };
   }
   if (item.running) return { label: '执行中', tone: 'running' };
+  if (item.name === 'terminal_run' && result && terminalHasEmptyOutput(result)) {
+    return { label: '已结束 · 无输出', tone: 'empty' };
+  }
   return {
     label: item.durationMs !== undefined ? `${item.durationMs} ms` : '已结束',
     tone: 'done',
@@ -112,6 +118,9 @@ const ActivityCard = memo(function ActivityCard({
     const result = item.result as Json | undefined;
     const deleted = item.name === 'file_delete' && result?.deleted === true;
     const state = toolState(item);
+    const command = item.name === 'terminal_run' ? terminalCommand(item.args) : '';
+    const notices = item.name === 'terminal_run' && result
+      ? terminalResultNotices(result, false) : [];
     return (
       <details
         className={`tool-card ${item.running ? 'running' : ''} tone-${state.tone}`}
@@ -121,12 +130,14 @@ const ActivityCard = memo(function ActivityCard({
           {item.running ? <Loader2 className="spin" size={15} /> : <Braces size={15} />}
           <strong>{item.name}</strong>
           <span>{item.deviceId === 'local' ? '本机' : '远端'}</span>
+          {command && <code className="tool-command-preview" title={command}>{command}</code>}
           <small className={`tool-state-badge tone-${state.tone}`}>{state.label}</small>
           <ChevronDown size={13} />
         </summary>
         {expanded && (
           <>
             {item.args && <pre>{prettyArgs(item.args)}</pre>}
+            {notices.length > 0 && <p className="tool-output-notice">{notices.join('\n')}</p>}
             {item.text && <pre className="tool-live-output">{item.text}</pre>}
             {item.result !== undefined && (
               <pre className="tool-result">{pretty(item.result)}</pre>
