@@ -53,6 +53,11 @@ impl Harness {
             _ = cancel.cancelled() => bail!("已停止等待推理资源"),
             permit = gate.acquire_owned() => permit?,
         };
+        if connection.id == "managed-llama" {
+            // Readiness can change while queued. Never restart a crashed engine
+            // here: a partial turn may already have performed tool operations.
+            self.engine.wait_until_ready(cancel).await?;
+        }
         let wait_ms = started.elapsed().as_millis();
         if let Some(sink) = sink {
             sink(json!({"type":"inference_acquired","waitMs":wait_ms}));

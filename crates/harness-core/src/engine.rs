@@ -7,7 +7,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
+    time::{Duration, Instant},
 };
+use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 pub const RUNTIME_MANIFEST: &str = include_str!("../../../assets/llama-runtime.json");
 
@@ -39,29 +42,180 @@ fn default_gpu() -> i32 {
 }
 
 pub struct Engine {
-    child: Mutex<Option<Child>>,
+    state: Mutex<EngineState>,
+    health_gate: AsyncMutex<()>,
+    health_client: Mutex<Option<reqwest::Client>>,
     dir: PathBuf,
+}
+#[derive(Default)]
+struct EngineState {
+    child: Option<Child>,
+    port: Option<u16>,
+    generation: u64,
+    ready: bool,
+    was_ready: bool,
+    last_health: Option<Instant>,
+    exit_status: Option<String>,
+}
+impl EngineState {
+    fn refresh_child(&mut self) -> Result<()> {
+        if let Some(exit) = self
+            .child
+            .as_mut()
+            .map(Child::try_wait)
+            .transpose()?
+            .flatten()
+        {
+            self.child = None;
+            self.ready = false;
+            self.exit_status = Some(exit.to_string());
+        }
+        Ok(())
+    }
 }
 impl Engine {
     pub fn new(dir: PathBuf) -> Self {
         Self {
-            child: Mutex::new(None),
+            state: Mutex::new(EngineState::default()),
+            health_gate: AsyncMutex::new(()),
+            health_client: Mutex::new(None),
             dir,
         }
     }
     pub fn status(&self) -> Result<Value> {
-        let mut child = self.child.lock().unwrap();
-        let running = if let Some(c) = child.as_mut() {
-            c.try_wait()?.is_none()
+        let mut state = self.state.lock().unwrap();
+        state.refresh_child()?;
+        let running = state.child.is_some();
+        let (phase, message) = if state.ready {
+            ("ready", "模型已就绪，可以开始对话。")
+        } else if running && state.was_ready {
+            (
+                "unresponsive",
+                "推理进程仍在运行，但暂时无法响应；请稍候或查看引擎日志。",
+            )
+        } else if running {
+            (
+                "loading",
+                "正在加载模型；发送消息后会等待模型就绪，可随时停止等待。",
+            )
+        } else if state.exit_status.is_some() {
+            (
+                "failed",
+                "推理进程已退出；请查看引擎日志，检查模型路径、内存和加载参数。",
+            )
         } else {
-            false
+            ("stopped", "本地推理已停止；发送消息时会按保存的配置启动。")
         };
-        if !running {
-            *child = None;
-        }
         Ok(
-            json!({"running":running,"pid":child.as_ref().map(|c|c.id()),"pinnedInstallerVersion":"b12211","actualRuntimeVersion":"unknown_until_probed","logPath":self.dir.join("engine.log")}),
+            json!({"running":running,"ready":state.ready,"phase":phase,"message":message,"exitStatus":state.exit_status,"port":state.port,"pid":state.child.as_ref().map(|c|c.id()),"pinnedInstallerVersion":"b12211","actualRuntimeVersion":"unknown_until_probed","logPath":self.dir.join("engine.log")}),
         )
+    }
+    /// A live PID is not proof that model loading has finished. Coalesce callers
+    /// and reuse a short-lived health result without occupying an inference slot.
+    pub async fn refresh_status(&self) -> Result<Value> {
+        let _health = self.health_gate.lock().await;
+        let status = self.status()?;
+        if status["running"] != true {
+            return Ok(status);
+        }
+        let (generation, port, cached) = {
+            let state = self.state.lock().unwrap();
+            (
+                state.generation,
+                state.port,
+                state
+                    .last_health
+                    .is_some_and(|at| at.elapsed() < Duration::from_secs(1)),
+            )
+        };
+        if cached {
+            return Ok(status);
+        }
+        let client = {
+            let mut cached = self.health_client.lock().unwrap();
+            if cached.is_none() {
+                *cached = Some(
+                    reqwest::Client::builder()
+                        .no_proxy()
+                        .connect_timeout(Duration::from_secs(1))
+                        .timeout(Duration::from_secs(2))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .build()?,
+                );
+            }
+            cached.as_ref().unwrap().clone()
+        };
+        let ready = async {
+            let mut response = client
+                .get(format!(
+                    "http://127.0.0.1:{}/health",
+                    port.context("推理引擎端口缺失")?
+                ))
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                return Ok::<_, anyhow::Error>(false);
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                if bytes.len().saturating_add(chunk.len()) > 4096 {
+                    return Ok(false);
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: Value = serde_json::from_slice(&bytes)?;
+            Ok(value["status"] == "ok")
+        }
+        .await
+        .unwrap_or(false);
+        {
+            let mut state = self.state.lock().unwrap();
+            state.refresh_child()?;
+            // A response from a stopped or replaced process must not mark the
+            // next process ready, even when it reuses the same port.
+            if state.generation == generation && state.child.is_some() {
+                state.ready = ready;
+                state.was_ready |= ready;
+                state.last_health = Some(Instant::now());
+            }
+        }
+        self.status()
+    }
+    pub async fn wait_until_ready(&self, cancel: &CancellationToken) -> Result<()> {
+        let started = Instant::now();
+        loop {
+            let status = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => bail!("已停止等待模型加载"),
+                status = self.refresh_status() => status?,
+            };
+            if status["running"] != true {
+                bail!(
+                    "{}{} 请在设置 → 模型与推理中启动或查看日志。",
+                    status["message"].as_str().unwrap_or("本地推理未启动。"),
+                    status["exitStatus"]
+                        .as_str()
+                        .map(|exit| format!("（{exit}）"))
+                        .unwrap_or_default()
+                );
+            }
+            if status["ready"] == true {
+                return Ok(());
+            }
+            let timeout = if status["phase"] == "unresponsive" {
+                10
+            } else {
+                300
+            };
+            if started.elapsed() >= Duration::from_secs(timeout) {
+                bail!("等待本地模型就绪超时。请在设置 → 模型与推理中查看日志；检查可用内存、GGUF 和加载参数后重试。消息已保留，未发送生成请求。")
+            }
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => bail!("已停止等待模型加载"),
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+            }
+        }
     }
     /// Report only known startup warnings, never arbitrary log content. A
     /// bounded prefix avoids reading an indefinitely growing engine log.
@@ -87,7 +241,9 @@ impl Engine {
         json!({"status":"inspected","source":"managed_engine_log_prefix","maxBytes":LIMIT,"truncated":truncated,"warnings":warnings})
     }
     pub fn start(&self, config: &EngineConfig) -> Result<Value> {
-        if self.status()?["running"] == true {
+        let mut state = self.state.lock().unwrap();
+        state.refresh_child()?;
+        if state.child.is_some() {
             bail!("推理引擎已经运行")
         }
         if !Path::new(&config.model_path).is_file() {
@@ -95,6 +251,12 @@ impl Engine {
         }
         if !(2048..=262144).contains(&config.context_length) {
             bail!("上下文必须在 2048 到 262144 之间")
+        }
+        if config.port < 1024 {
+            bail!("本机端口必须在 1024 到 65535 之间")
+        }
+        if !config.projector_path.is_empty() && !Path::new(&config.projector_path).is_file() {
+            bail!("请选择有效的视觉 projector 文件，或清空该配置")
         }
         let listener =
             std::net::TcpListener::bind(("127.0.0.1", config.port)).context("端口已被占用")?;
@@ -140,7 +302,13 @@ impl Engine {
         let child = cmd
             .spawn()
             .context("无法启动 llama-server，请先安装引擎或选择可执行文件")?;
-        *self.child.lock().unwrap() = Some(child);
+        *state = EngineState {
+            child: Some(child),
+            port: Some(config.port),
+            generation: state.generation.wrapping_add(1),
+            ..EngineState::default()
+        };
+        drop(state);
         let mut status = self.status()?;
         status["chatTemplate"] = match template {
             Some((_, report)) => report,
@@ -149,10 +317,16 @@ impl Engine {
         Ok(status)
     }
     pub fn stop(&self) -> Result<Value> {
-        if let Some(mut child) = self.child.lock().unwrap().take() {
+        let mut state = self.state.lock().unwrap();
+        if let Some(mut child) = state.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        *state = EngineState {
+            generation: state.generation.wrapping_add(1),
+            ..EngineState::default()
+        };
+        drop(state);
         self.status()
     }
     pub async fn install(&self, backend: &str) -> Result<Value> {

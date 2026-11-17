@@ -124,6 +124,8 @@ impl Harness {
             };
             self.store.rename(id, &title)?;
         }
+        self.prepare_managed_engine(&session.connection_id, &cancel, &sink)
+            .await?;
         let connection = self.connection(&session.connection_id)?;
         let provider = Arc::new(Provider::new(connection.clone())?);
         let cfg = self.settings.lock().unwrap().clone();
@@ -488,6 +490,12 @@ impl Harness {
             self.store.append(id, "activity", &metrics)?;
             sink(metrics);
             if let Err(e) = result {
+                if !cancel.is_cancelled()
+                    && connection.id == "managed-llama"
+                    && self.engine.status()?["running"] != true
+                {
+                    return Err(e).context("本地推理进程在本轮中退出；请在设置 → 模型与推理中查看日志，检查内存及加载参数后重新发送。已完成的工具操作不会自动重放");
+                }
                 let description = e.to_string();
                 if !cancel.is_cancelled()
                     && !output_limit_retried

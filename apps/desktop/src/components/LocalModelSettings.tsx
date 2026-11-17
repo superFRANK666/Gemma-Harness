@@ -11,9 +11,11 @@ interface Props {
 }
 export default function LocalModelSettings({ config, backend, busy, status, result, onChange, onBackendChange, onPath, onInstall, onStart, onStop, onInspect, onLog, onRefresh }: Props) {
   const running = status?.running === true;
+  const phase = status?.phase;
+  const statusLabel = !status ? '正在读取引擎状态' : status.ready === true ? '本地模型已就绪' : phase === 'failed' ? '推理进程已退出' : phase === 'unresponsive' ? '推理服务暂未响应' : running ? '正在加载本地模型' : '本地推理已停止';
   const locked = !!busy || !status || running;
   return <section className="local-model-settings" aria-label="本地模型">
-    <div className="local-model-status"><Server size={17} /><div><strong>{!status ? '正在读取引擎状态' : running ? '推理进程运行中' : '本地推理已停止'}</strong><small>{running ? '修改模型或加载参数前，请先停止推理。模型是否就绪可查看日志或运行诊断。' : '选择 GGUF 并启动推理，再使用下方的共用设置运行诊断。'}</small></div><button className="icon-button" aria-label="刷新引擎状态" onClick={onRefresh} disabled={!!busy}><RefreshCw size={14} /></button></div>
+    <div className="local-model-status"><Server size={17} /><div><strong>{statusLabel}</strong><small>{typeof status?.message === 'string' ? status.message : '保存本地模型配置后，发送消息时会自动启动并等待模型就绪。'}{typeof status?.exitStatus === 'string' ? `（${status.exitStatus}）` : ''}</small></div><button className="icon-button" aria-label="刷新引擎状态" onClick={onRefresh} disabled={!!busy}><RefreshCw size={14} /></button></div>
     <fieldset className="model-configuration" disabled={locked}>
       <EnginePath field="modelPath" label="模型 GGUF 文件" placeholder="选择你的量化模型文件" value={config.modelPath} onChange={onChange} onPath={onPath} />
       <EnginePath field="projectorPath" label="视觉 projector · mmproj · 可选" placeholder="图像输入需要与模型匹配的 projector" value={config.projectorPath} onChange={onChange} onPath={onPath} />

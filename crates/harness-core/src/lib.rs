@@ -4,6 +4,7 @@ mod computer;
 pub mod context;
 pub mod engine;
 mod inference;
+mod managed_engine;
 pub mod mcp;
 mod projects;
 pub mod store;
@@ -874,57 +875,14 @@ impl Harness {
                 self.require_idle()?;
                 let engine_config: engine::EngineConfig =
                     serde_json::from_value(request["config"].clone())?;
-                let mut profile =
-                    self.record_model_profile(Path::new(&engine_config.model_path))?;
-                let mut result = self.engine.start(&engine_config)?;
-                if engine_config.chat_template_path.trim().is_empty() {
-                    result["chatTemplate"]["knownIssues"] =
-                        profile["identity"]["chatTemplate"]["knownIssues"].clone();
-                }
-                profile["runtime"] = json!({"pinnedInstallerVersion":"b12211","actualVersion":"unknown_until_probed","binaryPath":engine_config.binary_path,"loadedContextRequested":engine_config.context_length,"projectorPath":engine_config.projector_path,"chatTemplate":result["chatTemplate"]});
-                let mut config = self.config();
-                config["modelProfiles"]["managed-llama"] = profile;
-                config["engineConfig"] = request["config"].clone();
-                let connections = config["connections"]
-                    .as_array_mut()
-                    .context("模型连接列表无效")?;
-                if !connections.iter().any(|c| c["id"] == "managed-llama") {
-                    connections.push(json!({"id":"managed-llama","name":"本地模型"}));
-                }
-                config["selectedConnectionId"] = json!("managed-llama");
-                // The managed alias is reused across starts. Never retain a
-                // family/thinking choice or budget for the previous weights.
-                if let Some(managed) =
-                    config["connections"]
-                        .as_array_mut()
-                        .and_then(|connections| {
-                            connections.iter_mut().find(|c| c["id"] == "managed-llama")
-                        })
-                {
-                    managed["baseUrl"] = json!(format!("http://127.0.0.1:{}", engine_config.port));
-                    managed["protocol"] = json!("chat_completions");
-                    managed["model"] = json!("gemma-local");
-                    managed["contextLength"] = json!(engine_config.context_length);
-                    managed["backend"] = json!("llama_cpp");
-                    managed["modelFamily"] = json!("auto");
-                    managed["thinkingMode"] = json!("auto");
-                    if managed["maxOutputTokens"]
-                        .as_u64()
-                        .is_some_and(|limit| limit > (engine_config.context_length / 2) as u64)
-                    {
-                        managed["maxOutputTokens"] = Value::Null;
-                    }
-                }
-                // A restarted engine may use different weights, template,
-                // projector or runtime even when its public alias is unchanged.
-                if let Some(diagnostics) = config["diagnostics"].as_object_mut() {
-                    diagnostics.remove("managed-llama");
-                }
-                self.persist(config)?;
-                Ok(result)
+                self.start_managed_engine(&engine_config, false).await
             }
-            "engine_stop" => self.engine.stop(),
-            "engine_status" => self.engine.status(),
+            "engine_stop" => {
+                let _binding = self.binding_gate.lock().await;
+                self.require_idle()?;
+                self.engine.stop()
+            }
+            "engine_status" => self.engine.refresh_status().await,
             "engine_log" => Ok(json!({"text":read_tail(&self.dir.join("engine.log"),24000)})),
             "pair_device" => {
                 let device = RemoteClient::pair(required(&request, "invitation")?).await?;

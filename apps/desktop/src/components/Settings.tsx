@@ -156,7 +156,10 @@ export default function Settings({
   useEffect(() => {
     if (!desktop || !managed || tab !== 'models') return;
     let active = true;
+    let refreshing = false;
     async function refresh(initial = false) {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const status = await api('engine_status');
         if (active) setEngineStatus(status);
@@ -165,6 +168,8 @@ export default function Settings({
           setEngineStatus(null);
           if (initial) onError(error);
         }
+      } finally {
+        refreshing = false;
       }
     }
     void refresh(true);
@@ -1017,7 +1022,7 @@ export default function Settings({
                     disabled={
                       !!busy ||
                       !connection.model?.trim() ||
-                      (managed && engineStatus?.running !== true)
+                      (managed && engineStatus?.ready !== true)
                     }
                     onClick={() =>
                       void task('diagnose', async () => {
