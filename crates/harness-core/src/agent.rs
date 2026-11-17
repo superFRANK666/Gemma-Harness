@@ -242,6 +242,8 @@ impl Harness {
         let mut completion_repairs = 0;
         let mut calibration = context::Calibration::default();
         let mut failed_calls: HashMap<(String, String), usize> = HashMap::new();
+        let mut empty_terminal_calls: HashMap<String, usize> = HashMap::new();
+        let mut empty_terminal_blocks = 0;
         let mut last_observation: Option<(String, String, String, usize)> = None;
         let mut dispatched_tools: BTreeSet<String> = BTreeSet::new();
         // A checked partial read is sufficient for an exact patch, but not
@@ -720,6 +722,16 @@ impl Harness {
                             json!({"isError":true,"notExecuted":true,"error":"本批调用有无效参数，剩余动作未执行；先修正调用"})
                         } else if batch_halted {
                             json!({"isError":true,"notExecuted":true,"error":"A prior tool failed; remaining calls were not executed. Inspect the failure and replan dependent work."})
+                        } else if call.function.name == "terminal_run"
+                            && args["command"].as_str().is_some_and(|command| {
+                                empty_terminal_calls.get(command.trim()).copied().unwrap_or(0) >= 2
+                            })
+                        {
+                            empty_terminal_blocks += 1;
+                            let event = json!({"type":"loop_guard","reason":"repeated_empty_terminal_output","action":"blocked","message":"相同命令已两次返回空输出，本次重复调用已拦截；正在尝试调整方法。"});
+                            self.store.append(id, "activity", &event)?;
+                            sink(event);
+                            json!({"isError":true,"notExecuted":true,"loop_guard":"repeated_empty_terminal_output","error":"This exact command already completed twice with no stdout or stderr. This repeat was NOT executed. Check supported arguments/help, use a different observation, or explain what information is unavailable. Do not claim the requested information was retrieved."})
                         } else if call.function.name == "tool_search" {
                             dispatched_tools.insert(call.function.name.clone());
                             let query = args["query"].as_str().unwrap_or("").trim().to_lowercase();
@@ -1048,6 +1060,26 @@ impl Harness {
                     fit_artifact_page(&mut result, 5800)?;
                 }
                 let failed = task::failed(&result);
+                if call.function.name == "terminal_run" && !failed {
+                    let empty = result["exit_code"] == 0
+                        && result["output_complete"] == true
+                        && result["stdout_bytes"] == 0
+                        && result["stderr_bytes"] == 0;
+                    if empty {
+                        // Also covers older remote executors without empty_output.
+                        result["empty_output"] = json!(true);
+                        if let Ok(args) = serde_json::from_str::<Value>(&call.function.arguments) {
+                            if let Some(command) = args["command"].as_str() {
+                                *empty_terminal_calls.entry(command.trim().to_owned()).or_default() += 1;
+                            }
+                        }
+                        result["harness_progress_hint"] = json!("Exit code 0, but stdout and stderr are empty. If information was expected, check supported arguments/help or change the observation. Repeating this command or reading its empty artifacts will not provide the missing information.");
+                    } else {
+                        // A different successful command may have changed the state.
+                        empty_terminal_calls.clear();
+                        empty_terminal_blocks = 0;
+                    }
+                }
                 computer.observe_result(
                     &self.store,
                     id,
@@ -1125,8 +1157,13 @@ impl Harness {
                 let content = if let Some(text) = raw_text {
                     json!(text)
                 } else {
+                    let model_result = if call.function.name == "terminal_run" {
+                        terminal_model_result(&result)
+                    } else {
+                        result.clone()
+                    };
                     tool_content(
-                        &result,
+                        &model_result,
                         6000,
                         full_artifact.as_deref(),
                         artifact_error.as_deref(),
@@ -1190,6 +1227,8 @@ impl Harness {
                 {
                     // Editing can make a previously failing test meaningful again.
                     failed_calls.clear();
+                    empty_terminal_calls.clear();
+                    empty_terminal_blocks = 0;
                 }
             }
             if uncertain {
@@ -1207,9 +1246,29 @@ impl Harness {
                 sink(json!({"type":"loop_guard","reason":"repeated_tool_failure"}));
                 bail!("相同工具和参数已重复失败三次，本轮停止以避免无效循环；请检查错误或调整方法后继续")
             }
+            if empty_terminal_blocks >= 2 {
+                bail!("模型仍在重复没有输出的命令，重复调用已拦截。尚未取得所需信息；请检查命令参数或改用其他查询方式。完整执行记录已保留。")
+            }
         }
         bail!("本轮达到 {MAX_STEPS} 个模型步骤上限；会话和任务检查点已保存，可继续")
     }
+}
+// Keep complete capture metadata in the event log, but do not spend model
+// context on empty artifact paths, zero byte counters and null error fields.
+fn terminal_model_result(result: &Value) -> Value {
+    let mut projected = result.clone();
+    if let Some(object) = projected.as_object_mut() {
+        for stream in ["stdout", "stderr"] {
+            let empty = result[format!("{stream}_bytes")] == 0;
+            if empty && result["output_complete"] == true {
+                for suffix in ["artifact", "bytes", "saved_bytes", "artifact_truncated", "error"] {
+                    object.remove(&format!("{stream}_{suffix}"));
+                }
+            }
+        }
+        object.retain(|_, value| !value.is_null());
+    }
+    projected
 }
 fn append_runtime_context(
     request: &mut Vec<ChatMessage>,

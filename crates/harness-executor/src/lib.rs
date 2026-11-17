@@ -509,8 +509,21 @@ impl Executor {
             }
             _ => bail!("Unknown process tool: {name}"),
         };
-        self.run_with_env_events(program, &arguments, timeout, cancel, &[], events)
-            .await
+        let mut result = self
+            .run_with_env_events(program, &arguments, timeout, cancel, &[], events)
+            .await?;
+        if name == "terminal_run"
+            && result["exit_code"] == 0
+            && result["output_complete"] == true
+            && result["cancelled"] == false
+            && result["timed_out"] == false
+            && result["stdout_bytes"] == 0
+            && result["stderr_bytes"] == 0
+        {
+            result["empty_output"] = json!(true);
+            result["harness_progress_hint"] = json!("The command exited with code 0 but produced no stdout or stderr. This can be normal for a silent command; it does not prove that requested information was retrieved. If information was expected, check the command's arguments/help or use a different observation. Do not repeat the same command or read its empty artifacts to obtain missing output.");
+        }
+        Ok(result)
     }
 
     pub async fn capabilities(&self) -> Result<Value> {
