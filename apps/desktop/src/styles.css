@@ -2156,12 +2156,28 @@ pre code {
   gap: 7px;
   color: var(--text-secondary);
   font-size: calc(11px * var(--ui-font-scale));
+  min-width: 0;
+  flex: 1;
+}
+
+.terminal-heading > span > svg {
+  flex-shrink: 0;
+}
+
+.terminal-cwd {
+  font-family: var(--font-code);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .terminal-heading-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .terminal-panel pre {

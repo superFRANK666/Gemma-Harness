@@ -25,6 +25,299 @@ const SEARCH_FILE_LIMIT: u64 = 64 * 1024 * 1024;
 const SEARCH_LINE_LIMIT: u64 = 256 * 1024;
 const WORKER_MESSAGE_LIMIT: usize = 32 * 1024 * 1024;
 static DESKTOP_LEASE: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
+#[cfg(unix)]
+static RESOLVED_UNIX_PATH: OnceLock<Option<std::ffi::OsString>> = OnceLock::new();
+
+/// Pre-warms the resolved Unix user `PATH` off the async executor thread.
+/// No-op on Windows, where process environments are already complete.
+pub async fn prepare_resolved_path() {
+    #[cfg(unix)]
+    if RESOLVED_UNIX_PATH.get().is_none() {
+        let _ = tokio::task::spawn_blocking(resolved_unix_path).await;
+    }
+}
+
+/// Applies the resolved Unix `PATH` (including login-shell and user/package
+/// toolchain directories) to a child command. No-op on Windows.
+pub fn apply_resolved_path(command: &mut Command) {
+    #[cfg(unix)]
+    if let Some(path) = resolved_unix_path() {
+        command.env("PATH", path);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+#[cfg(unix)]
+fn unix_shell() -> std::borrow::Cow<'static, str> {
+    unix_shell_from_env(std::env::var_os("SHELL").as_deref())
+}
+
+#[cfg(unix)]
+fn unix_shell_from_env(shell: Option<&std::ffi::OsStr>) -> std::borrow::Cow<'static, str> {
+    const POSIX_SHELLS: &[&str] = &["zsh", "bash", "sh", "dash", "ksh", "mksh", "ash"];
+    if let Some(shell) = shell {
+        let path = Path::new(shell);
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| POSIX_SHELLS.contains(&name))
+            && path.is_file()
+        {
+            if let Some(s) = shell.to_str() {
+                return std::borrow::Cow::Owned(s.to_owned());
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if Path::new("/bin/zsh").is_file() {
+        return std::borrow::Cow::Borrowed("/bin/zsh");
+    }
+    std::borrow::Cow::Borrowed("/bin/sh")
+}
+
+#[cfg(unix)]
+fn resolved_unix_path() -> Option<&'static std::ffi::OsStr> {
+    RESOLVED_UNIX_PATH
+        .get_or_init(|| {
+            let current = std::env::var_os("PATH");
+            let login = probe_login_shell_path();
+            let system_etc = read_etc_paths();
+            let standard = standard_unix_bin_dirs();
+            merge_unix_paths(current.as_deref(), login.as_deref(), &standard, &system_etc)
+        })
+        .as_deref()
+}
+
+#[cfg(unix)]
+fn init_process_group() -> std::io::Result<()> {
+    if unsafe { libc::setpgid(0, 0) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn probe_login_shell_path() -> Option<std::ffi::OsString> {
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+
+    let shell = std::env::var_os("SHELL")
+        .filter(|s| Path::new(s).is_file())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "macos") && Path::new("/bin/zsh").is_file() {
+                "/bin/zsh".into()
+            } else {
+                "/bin/sh".into()
+            }
+        });
+    let name = Path::new(&shell).file_name().and_then(|n| n.to_str())?;
+    let probe_cmd = match name {
+        "zsh" | "bash" | "sh" | "dash" | "ksh" | "mksh" | "ash" | "tcsh" | "csh" => {
+            r#"printf '__HARNESS_PATH__%s__HARNESS_PATH__' "$PATH""#
+        }
+        "fish" => r#"printf '__HARNESS_PATH__%s__HARNESS_PATH__' (string join ':' $PATH)"#,
+        _ => return None,
+    };
+    let mut cmd = std::process::Command::new(&shell);
+    cmd.args(["-l", "-c", probe_cmd])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(init_process_group);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let pid = child.id();
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while buf.len() < 256 * 1024 {
+            match stdout.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let _ = tx.send(buf);
+    });
+    let output = match rx.recv_timeout(Duration::from_millis(1500)) {
+        Ok(bytes) => {
+            let _ = child.wait();
+            bytes
+        }
+        Err(_) => {
+            if matches!(child.try_wait(), Ok(None)) {
+                kill_pid_group(pid, true);
+            }
+            let _ = child.wait();
+            return None;
+        }
+    };
+    extract_delimited_path(&output)
+}
+
+#[cfg(unix)]
+fn extract_delimited_path(bytes: &[u8]) -> Option<std::ffi::OsString> {
+    use std::os::unix::ffi::OsStrExt;
+    const MARKER: &[u8] = b"__HARNESS_PATH__";
+    let start = bytes.windows(MARKER.len()).position(|w| w == MARKER)? + MARKER.len();
+    let rest = &bytes[start..];
+    let end = rest.windows(MARKER.len()).position(|w| w == MARKER)?;
+    let slice = &rest[..end];
+    (!slice.is_empty()).then(|| std::ffi::OsStr::from_bytes(slice).to_owned())
+}
+
+#[cfg(unix)]
+fn read_etc_paths() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let push_file = |path: &Path, out: &mut Vec<PathBuf>| {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                let candidate = PathBuf::from(line);
+                if candidate.is_dir() {
+                    out.push(candidate);
+                }
+            }
+        }
+    };
+    push_file(Path::new("/etc/paths"), &mut dirs);
+    if let Ok(entries) = std::fs::read_dir("/etc/paths.d") {
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect();
+        files.sort();
+        for file in files {
+            push_file(&file, &mut dirs);
+        }
+    }
+    dirs
+}
+
+#[cfg(unix)]
+fn standard_unix_bin_dirs() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for rel in [
+            ".local/bin",
+            ".cargo/bin",
+            "go/bin",
+            ".bun/bin",
+            ".volta/bin",
+            ".pyenv/shims",
+            ".asdf/shims",
+            ".local/share/mise/shims",
+        ] {
+            candidates.push(home.join(rel));
+        }
+    }
+    for abs in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/opt/local/bin",
+        "/opt/local/sbin",
+        "/usr/local/go/bin",
+        "/snap/bin",
+    ] {
+        candidates.push(PathBuf::from(abs));
+    }
+    candidates.into_iter().filter(|p| p.is_dir()).collect()
+}
+
+#[cfg(unix)]
+fn is_bare_system_bin(path: &Path) -> bool {
+    matches!(
+        path.to_str(),
+        Some("/usr/bin" | "/bin" | "/usr/sbin" | "/sbin")
+    )
+}
+
+#[cfg(unix)]
+fn is_minimal_system_path(entries: &[PathBuf]) -> bool {
+    entries.iter().all(|path| {
+        is_bare_system_bin(path)
+            || matches!(
+                path.to_str(),
+                Some("/usr/local/bin" | "/usr/local/sbin" | "/System/Cryptexes/App/usr/bin")
+            )
+    })
+}
+
+#[cfg(unix)]
+fn merge_unix_paths(
+    current: Option<&std::ffi::OsStr>,
+    login: Option<&std::ffi::OsStr>,
+    standard: &[PathBuf],
+    system_etc: &[PathBuf],
+) -> Option<std::ffi::OsString> {
+    let current_entries: Vec<PathBuf> = current
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
+    let login_entries: Vec<PathBuf> = login
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
+
+    let mut merged = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |path: PathBuf| {
+        if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
+            merged.push(path);
+        }
+    };
+
+    if is_minimal_system_path(&current_entries) {
+        let split_at = login_entries
+            .iter()
+            .position(|p| is_bare_system_bin(p))
+            .unwrap_or(login_entries.len());
+        for path in &login_entries[..split_at] {
+            push(path.clone());
+        }
+        for path in standard {
+            push(path.clone());
+        }
+        for path in system_etc {
+            if !is_bare_system_bin(path) {
+                push(path.clone());
+            }
+        }
+        for path in &login_entries[split_at..] {
+            push(path.clone());
+        }
+        for path in system_etc {
+            push(path.clone());
+        }
+        for path in current_entries {
+            push(path);
+        }
+    } else {
+        for path in current_entries {
+            push(path);
+        }
+        for path in login_entries {
+            push(path);
+        }
+        for path in standard {
+            push(path.clone());
+        }
+        for path in system_etc {
+            push(path.clone());
+        }
+    }
+
+    (!merged.is_empty())
+        .then(|| std::env::join_paths(merged).ok())
+        .flatten()
+}
 
 /// A state-changing local helper request was at least partly sent, but no
 /// trustworthy result arrived. Callers must inspect state before deliberate
@@ -180,6 +473,8 @@ impl Executor {
         cancel: CancellationToken,
         events: Option<Arc<OutputEvents>>,
     ) -> Result<Value> {
+        #[cfg(unix)]
+        let shell_program: std::borrow::Cow<'static, str>;
         let (program, arguments, timeout) = match name {
             "git_status" => ("git", vec!["status", "--short", "--branch"], 30_000),
             "git_diff" => (
@@ -205,8 +500,11 @@ impl Executor {
                     ],
                     timeout,
                 );
-                #[cfg(not(windows))]
-                let invocation = ("/bin/sh", vec!["-c", command], timeout);
+                #[cfg(unix)]
+                let invocation = {
+                    shell_program = unix_shell();
+                    (shell_program.as_ref(), vec!["-c", command], timeout)
+                };
                 invocation
             }
             _ => bail!("Unknown process tool: {name}"),
@@ -1113,6 +1411,7 @@ impl Executor {
         environment: &[(&str, &std::ffi::OsStr)],
         events: Option<Arc<OutputEvents>>,
     ) -> Result<Value> {
+        prepare_resolved_path().await;
         let id = uuid::Uuid::new_v4().to_string();
         let stdout_path = self.artifact_dir.join(format!("{id}-stdout.txt"));
         let stderr_path = self.artifact_dir.join(format!("{id}-stderr.txt"));
@@ -1139,6 +1438,12 @@ impl Executor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if !environment
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+        {
+            apply_resolved_path(&mut command);
+        }
         for (name, value) in environment {
             command.env(name, value);
         }
@@ -1356,6 +1661,7 @@ impl Worker {
     }
 
     async fn spawn(native: bool, artifacts: &Path, workspace: &Path) -> Result<Self> {
+        prepare_resolved_path().await;
         let (mut command, description) = if native {
             let (program, args) = native_program()?;
             let mut c = Command::new(&program);
@@ -1367,6 +1673,7 @@ impl Worker {
             c.arg(script);
             (c, "Playwright browser worker")
         };
+        apply_resolved_path(&mut command);
         command
             .env("HARNESS_ARTIFACT_DIR", artifacts)
             .env("HARNESS_WORKSPACE", workspace)
@@ -1862,12 +2169,7 @@ async fn capture<R: tokio::io::AsyncRead + Unpin>(
 fn configure_group(command: &mut Command) {
     #[cfg(unix)]
     unsafe {
-        command.pre_exec(|| {
-            if libc::setpgid(0, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+        command.pre_exec(init_process_group);
     }
     #[cfg(windows)]
     {
@@ -3019,5 +3321,110 @@ mod tests {
             png
         );
         server.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_path_resolution_merges_login_and_toolchain_dirs_for_minimal_gui_env() {
+        let extracted = extract_delimited_path(
+            b"welcome banner\n__HARNESS_PATH__/opt/homebrew/bin:/usr/bin__HARNESS_PATH__\n",
+        )
+        .unwrap();
+        assert_eq!(extracted, "/opt/homebrew/bin:/usr/bin");
+
+        let merged = merge_unix_paths(
+            Some(std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin")),
+            Some(std::ffi::OsStr::new(
+                "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            )),
+            &[
+                PathBuf::from("/Users/test/.cargo/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ],
+            &[PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin")],
+        )
+        .unwrap();
+        let parts: Vec<PathBuf> = std::env::split_paths(&merged).collect();
+        assert_eq!(
+            parts,
+            vec![
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/opt/homebrew/sbin"),
+                PathBuf::from("/usr/local/bin"),
+                PathBuf::from("/Users/test/.cargo/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+                PathBuf::from("/usr/sbin"),
+                PathBuf::from("/sbin"),
+            ]
+        );
+
+        let custom = merge_unix_paths(
+            Some(std::ffi::OsStr::new("/tmp/custom-bin:/usr/bin:/bin")),
+            Some(std::ffi::OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
+            &[PathBuf::from("/Users/test/.cargo/bin")],
+            &[],
+        )
+        .unwrap();
+        let custom_parts: Vec<PathBuf> = std::env::split_paths(&custom).collect();
+        assert_eq!(
+            custom_parts,
+            vec![
+                PathBuf::from("/tmp/custom-bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/Users/test/.cargo/bin"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_shell_selection_accepts_posix_shells_and_falls_back_from_non_posix() {
+        let fallback = if cfg!(target_os = "macos") && Path::new("/bin/zsh").is_file() {
+            "/bin/zsh"
+        } else {
+            "/bin/sh"
+        };
+        assert_eq!(
+            unix_shell_from_env(Some(std::ffi::OsStr::new("/bin/sh"))),
+            "/bin/sh"
+        );
+        assert_eq!(
+            unix_shell_from_env(Some(std::ffi::OsStr::new("/definitely/missing/fish"))),
+            fallback
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let fake_fish = dir.path().join("fish");
+        std::fs::write(&fake_fish, "#!/bin/sh\n").unwrap();
+        assert_eq!(unix_shell_from_env(Some(fake_fish.as_os_str())), fallback);
+    }
+
+    #[tokio::test]
+    async fn terminal_run_captures_stdout_for_workspace_listing() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("alpha.txt"), "ok").unwrap();
+        let executor = Executor::new(workspace.path().into(), artifacts.path().into()).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = executor
+            .execute_streaming(
+                "terminal_run",
+                json!({"command": if cfg!(windows) { "Get-ChildItem -Name" } else { "ls" }}),
+                CancellationToken::new(),
+                tx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["exit_code"], 0);
+        assert!(result["stdout"].as_str().unwrap().contains("alpha.txt"));
+        let mut streamed = String::new();
+        while let Ok(event) = rx.try_recv() {
+            if event["type"] == "tool_output" {
+                streamed.push_str(event["text"].as_str().unwrap_or(""));
+            }
+        }
+        assert!(streamed.contains("alpha.txt"));
     }
 }

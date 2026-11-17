@@ -65,7 +65,9 @@ struct Peer {
 }
 impl Peer {
     fn start(config: &McpConfig) -> Result<Self> {
-        let mut child = Command::new(&config.command)
+        let mut child = Command::new(&config.command);
+        harness_executor::apply_resolved_path(&mut child);
+        let mut child = child
             .args(&config.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -294,6 +296,7 @@ impl McpManager {
             }
         }
         if peer.is_none() {
+            harness_executor::prepare_resolved_path().await;
             let mut started = Peer::start(c)?;
             let initialization=async {
                 let init=started.request("initialize",json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"gemma-harness","version":env!("CARGO_PKG_VERSION")}}),cancel.clone(),slot.reset.clone()).await?;

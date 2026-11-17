@@ -2,6 +2,69 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { Square, Terminal, Trash2, X } from 'lucide-react';
 import { IconButton } from './Mark';
 
+/**
+ * Reverses macOS/WebKit smart punctuation and autocorrect mutations inside the
+ * CLI input while leaving pastes, undo/redo, and IME composition untouched.
+ */
+function normalizeTerminalInputEdit(
+  prev: string,
+  next: string,
+  inputType: string,
+  isComposing: boolean,
+): { value: string; caret: number } | null {
+  if (
+    isComposing ||
+    inputType === 'insertFromPaste' ||
+    inputType === 'insertFromDrop' ||
+    inputType === 'historyUndo' ||
+    inputType === 'historyRedo'
+  ) {
+    return null;
+  }
+
+  let prefix = 0;
+  const minLen = Math.min(prev.length, next.length);
+  while (prefix < minLen && prev[prefix] === next[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < prev.length - prefix &&
+    suffix < next.length - prefix &&
+    prev[prev.length - 1 - suffix] === next[next.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const removed = prev.slice(prefix, prev.length - suffix);
+  const inserted = next.slice(prefix, next.length - suffix);
+
+  let replacement: string | null = null;
+  if (
+    (removed === '-' && (inserted === '\u2014' || inserted === '\u2013')) ||
+    (removed.startsWith('--') &&
+      (inserted.startsWith('\u2014') || inserted.startsWith('\u2013')) &&
+      inserted.slice(1).startsWith(removed.slice(2)))
+  ) {
+    replacement = '--' + inserted.slice(1);
+  } else if (inputType === 'insertReplacementText') {
+    if (inserted === '\u2014' || inserted === '\u2013') replacement = '--';
+    else if (inserted === '\u201C' || inserted === '\u201D') replacement = '"';
+    else if (inserted === '\u2018' || inserted === '\u2019') replacement = "'";
+    else if (
+      removed &&
+      removed !== inserted &&
+      removed.toLowerCase() === inserted.toLowerCase()
+    ) {
+      replacement = removed;
+    }
+  }
+
+  if (replacement === null) return null;
+  return {
+    value: next.slice(0, prefix) + replacement + next.slice(next.length - suffix),
+    caret: prefix + replacement.length,
+  };
+}
+
 export default function TerminalPanel({
   terminal,
   command,
@@ -30,6 +93,8 @@ export default function TerminalPanel({
   onClose: () => void;
 }) {
   const outputRef = useRef<HTMLPreElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const pendingCaretRef = useRef<number | null>(null);
   const followRef = useRef(true);
   const scrollTopRef = useRef(0);
   const [history, setHistory] = useState<string[]>([]);
@@ -39,6 +104,14 @@ export default function TerminalPanel({
   useLayoutEffect(() => {
     followRef.current = true;
   }, []);
+
+  useLayoutEffect(() => {
+    const caret = pendingCaretRef.current;
+    pendingCaretRef.current = null;
+    if (caret !== null && inputRef.current) {
+      inputRef.current.setSelectionRange(caret, caret);
+    }
+  }, [command]);
 
   useLayoutEffect(() => {
     const output = outputRef.current;
@@ -69,6 +142,11 @@ export default function TerminalPanel({
       <div className="terminal-heading">
         <span>
           <Terminal size={13} /> 终端 · {deviceName}
+          {workspace && (
+            <code className="terminal-cwd" title={workspace}>
+              {workspace}
+            </code>
+          )}
         </span>
         <div className="terminal-heading-actions">
           <IconButton
@@ -107,12 +185,30 @@ export default function TerminalPanel({
       >
         <span aria-hidden="true">❯</span>
         <input
+          ref={inputRef}
+          type="text"
           aria-label="终端命令"
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
           placeholder={workspace ? '输入命令…' : '请先选择项目'}
           value={command}
           onChange={e => {
             if (historyIndex !== -1) setHistoryIndex(-1);
-            onCommandChange(e.target.value);
+            const native = e.nativeEvent as Partial<InputEvent>;
+            const normalized = normalizeTerminalInputEdit(
+              command,
+              e.target.value,
+              typeof native.inputType === 'string' ? native.inputType : '',
+              native.isComposing === true,
+            );
+            if (normalized) {
+              pendingCaretRef.current = normalized.caret;
+              onCommandChange(normalized.value);
+            } else {
+              onCommandChange(e.target.value);
+            }
           }}
           onKeyDown={e => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {

@@ -1,13 +1,11 @@
-## v0.3.6（2026-11-16）
+## v0.3.7（2026-11-17）
 
-- 优化工作台前端交互与视觉排版：提升状态栏与辅助文本字号和对比度，统一设置页面卡片分组与按钮对齐，完善消息与代码块一键复制、工具状态语义徽标及图片附件缩略图。
-- 升级检查器面板：文件浏览器支持目录返回上级、未保存标记、`Cmd/Ctrl+S` 快捷保存与放弃编辑确认；差异视图将 `git_diff` 结果解析为带行增删高亮的结构化 Diff；电脑视图支持点击放大截图预览。
-- 完善工作台快捷键与面板交互：顶栏菜单按钮支持收起／展开侧边栏，终端支持上下键命令历史与清空，会话列表支持标题重命名、JSON 导出以及 `Esc` 清空并退出搜索，设置与性能／更新浮层支持 `Esc` 关闭。
-- 修复全局快捷键闭包读取旧配置、流式/历史复用 `callId` 冲突及无增量直出 `assistant_completed` 等边界问题，并同步修复及扩展前端 Playwright UI 自动化测试。
-- 优化应用内手动检查更新机制：显式携带无缓存请求头以穿透本地与中间代理缓存，并在已安装待重启状态锁定重复检查入口，避免状态被覆盖。
-- 同步更新 macOS、Windows、Linux 安装包与签名更新清单至 0.3.6。
+- 修复内置终端命令环境与 Shell 调度：在 macOS／Linux 上优先使用用户 POSIX Shell（如 `$SHELL`），并合并登录 Shell、`PATH` 配置目录（`/etc/paths`、`/etc/paths.d`）及 Homebrew／用户工具链路径（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`、`~/.local/bin` 等），解决桌面应用从图形界面启动时找不到 `brew` 等命令行工具的问题（同步覆盖 Git 与 MCP 子进程）。
+- 修复内置终端输入框在 macOS WebKit 下的自动首字母大写、自动纠错与智能破折号／智能引号替换（如 `brew --config` 被改写为 `Brew —config`），并保留粘贴与输入法组合输入。
+- 在内置终端标题栏展示当前绑定的工作目录路径，并为 `streamTool` 增加结果 `stdout`／`stderr` 兜底渲染（当未收到流式分片时补齐输出且避免重复），提升命令反馈一致性。
+- 同步更新 macOS、Windows、Linux 安装包与签名更新清单至 0.3.7。
 
-本次发布按要求不运行测试；三平台生产构建、安装包签名和远端资产校验的结果以 GitHub Actions 发布流程为准。Windows、Linux 和 Intel Mac 的真实设备安装与更新仍需分别验收。
+本版在 Apple Silicon macOS 上完成了前端 `tsc -b`／`vite build`、72 项 Playwright UI 自动化测试、发布脚本测试（3 项），以及 `cargo fmt --check`、`cargo check -p harness-desktop`、`cargo clippy`、`harness-executor`、`harness-model`、`harness-remote`、`harness-core` 单元测试与 `manual_stream`／`projects` 集成测试；`agent_end_to_end` 中既有步骤上限断言测试（期待 48 与当前 `MAX_STEPS = 96` 不一致）未修改。三平台生产构建、安装包签名与更新清单校验以 GitHub Actions 发布流水线为准，Windows、Linux 与 Intel Mac 的真实设备安装与更新仍需分别验收。
 
 ## 下载
 

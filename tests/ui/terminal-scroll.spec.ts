@@ -180,3 +180,73 @@ test('a new manual command and reopening the terminal restore following', async 
   await finish(page);
   await atBottom(output);
 });
+
+test('terminal disables autocorrect, reverses smart dashes, shows workspace, and falls back to result output', async ({ page }) => {
+  const output = await terminalFixture(page);
+  await expect(page.locator('.terminal-cwd')).toHaveText('/tmp/terminal-scroll-test-fixture');
+
+  const input = page.getByRole('textbox', { name: '终端命令', exact: true });
+  await expect(input).toHaveAttribute('autocapitalize', 'none');
+  await expect(input).toHaveAttribute('autocorrect', 'off');
+  await expect(input).toHaveAttribute('autocomplete', 'off');
+  await expect(input).toHaveAttribute('spellcheck', 'false');
+
+  // Simulate macOS Smart Dash turning "-" into "—" as the user types "brew --config".
+  await input.fill('brew -');
+  await input.evaluate(element => {
+    const el = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, 'brew \u2014');
+    el.setSelectionRange(6, 6);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: '\u2014' }));
+  });
+  await expect(input).toHaveValue('brew --');
+
+  // Editing in the middle preserves trailing text and places the caret after "--".
+  await input.fill('brew -config');
+  await input.evaluate(element => {
+    const el = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, 'brew \u2014config');
+    el.setSelectionRange(6, 6);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: '\u2014' }));
+  });
+  await expect(input).toHaveValue('brew --config');
+  expect(await input.evaluate(el => (el as HTMLInputElement).selectionStart)).toBe(7);
+
+  // Delayed smart-dash replacement on Space after "--config" also restores "--config ".
+  await input.evaluate(element => {
+    const el = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, 'brew \u2014config ');
+    el.setSelectionRange(13, 13);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: '\u2014config ' }));
+  });
+  await expect(input).toHaveValue('brew --config ');
+
+  // Simulate smart-quote replacement via insertReplacementText.
+  await input.fill('echo ');
+  await input.evaluate(element => {
+    const el = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, 'echo \u201C');
+    el.setSelectionRange(6, 6);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: '\u201C' }));
+  });
+  await expect(input).toHaveValue('echo "');
+
+  // Direct pastes are never rewritten.
+  await input.fill('');
+  await input.evaluate(element => {
+    const el = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, 'echo \u2014');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: 'echo \u2014' }));
+  });
+  await expect(input).toHaveValue('echo \u2014');
+
+  // Fallback renders result stdout/stderr if no tool_output chunks arrived before completion.
+  await start(page, 'ls', 1);
+  await finish(page, { stdout: 'Cargo.toml\nsrc\n' });
+  await expect(output).toHaveText('\n$ ls\nCargo.toml\nsrc\n');
+});

@@ -987,6 +987,8 @@ export default function App() {
     setTerminal(t => (t ?? '') + `\n$ ${cmd}\n`);
     try {
       let truncated = false;
+      let streamedOutput = false;
+      let settled = false;
       const result = await streamTool(
         {
           operationId,
@@ -995,12 +997,13 @@ export default function App() {
           args: { command: cmd, timeout_ms: 600000 },
         },
         event => {
-          if (event.type !== 'tool_output') return;
+          if (settled || event.type !== 'tool_output') return;
           let text = typeof event.text === 'string' ? event.text : '';
           if (event.truncated === true) {
             text = text.replace(LIVE_TRUNCATION_NOTICE, '');
             if (!truncated) {
               truncated = true;
+              streamedOutput = true;
               setTerminal(t => {
                 const output = (t ?? '') + text;
                 return (
@@ -1011,14 +1014,28 @@ export default function App() {
               return;
             }
           }
-          if (text) setTerminal(t => (t ?? '') + text);
+          if (text) {
+            streamedOutput = true;
+            setTerminal(t => (t ?? '') + text);
+          }
         },
       );
+      let fallback = '';
+      if (!streamedOutput) {
+        settled = true;
+        const out = typeof result.stdout === 'string' ? result.stdout : '';
+        const err = typeof result.stderr === 'string' ? result.stderr : '';
+        fallback = out + err;
+      }
       const notices = terminalResultNotices(result, truncated);
-      if (notices.length) {
-        setTerminal(
-          t => (t ?? '') + `${!t || t.endsWith('\n') ? '' : '\n'}${notices.join('\n')}\n`,
-        );
+      if (fallback || notices.length) {
+        setTerminal(t => {
+          let next = (t ?? '') + fallback;
+          if (notices.length) {
+            next += `${!next || next.endsWith('\n') ? '' : '\n'}${notices.join('\n')}\n`;
+          }
+          return next;
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
