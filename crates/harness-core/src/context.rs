@@ -302,8 +302,8 @@ pub fn split_for_compaction(messages: &[ChatMessage]) -> Option<usize> {
         .filter(|(_, m)| m.role == "user")
         .map(|(i, _)| i)
         .collect();
-    let turn_split = (boundaries.len() >= 2)
-        .then(|| boundaries[boundaries.len().saturating_sub(2).max(1)]);
+    let turn_split =
+        (boundaries.len() >= 2).then(|| boundaries[boundaries.len().saturating_sub(2).max(1)]);
     let mut complete = Vec::new();
     let mut i = 0;
     while i < messages.len() {

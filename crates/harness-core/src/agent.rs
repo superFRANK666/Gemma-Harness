@@ -392,7 +392,8 @@ impl Harness {
                     "Earlier assistant and tool details were omitted to fit the context. All original user instructions and recent results are retained. Use history_search or saved artifacts for missing evidence; do not replay completed operations or infer unobserved results.",
                 );
                 let mut compacted_estimate = estimate_projection(&compacted);
-                let event = json!({"type":"compaction_started","estimatedTokens":estimate,"budget":budget});
+                let event =
+                    json!({"type":"compaction_started","estimatedTokens":estimate,"budget":budget});
                 self.store.append(id, "activity", &event)?;
                 sink(event);
                 let summary_result: Result<String> = async {
@@ -432,7 +433,10 @@ impl Harness {
                 if let Ok(summary) = summary_result {
                     if !summary.trim().is_empty() {
                         let candidate = context::continuation_from_split(
-                            &user_history, &messages, split, &summary,
+                            &user_history,
+                            &messages,
+                            split,
+                            &summary,
                         );
                         let candidate_estimate = estimate_projection(&candidate);
                         if candidate_estimate < conservative_estimate
@@ -768,7 +772,8 @@ impl Harness {
                                 empty_terminal_calls
                                     .get(command.trim())
                                     .copied()
-                                    .unwrap_or(0) >= 2
+                                    .unwrap_or(0)
+                                    >= 2
                             })
                         {
                             empty_terminal_blocks += 1;
@@ -1312,7 +1317,11 @@ fn terminal_model_result(result: &Value) -> Value {
             let empty = result[format!("{stream}_bytes")] == 0;
             if empty && result["output_complete"] == true {
                 for suffix in [
-                    "artifact", "bytes", "saved_bytes", "artifact_truncated", "error",
+                    "artifact",
+                    "bytes",
+                    "saved_bytes",
+                    "artifact_truncated",
+                    "error",
                 ] {
                     object.remove(&format!("{stream}_{suffix}"));
                 }
