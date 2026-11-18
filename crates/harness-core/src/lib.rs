@@ -136,7 +136,7 @@ impl Harness {
             bail!("应用正在准备更新，请稍后重试")
         }
         if !self.active.lock().unwrap().is_empty() {
-            bail!("请先停止运行中的任务或终端命令，再切换或移除项目")
+            bail!("请先停止运行中的任务或终端命令")
         }
         Ok(())
     }
@@ -800,6 +800,13 @@ impl Harness {
                     required(&request, "sessionId")?,
                     required(&request, "title")?,
                 )?;
+                Ok(json!({"ok":true}))
+            }
+            "delete_session" => {
+                let id = required(&request, "sessionId")?;
+                let _binding = self.binding_gate.lock().await;
+                self.require_idle()?;
+                self.store.delete_session(id)?;
                 Ok(json!({"ok":true}))
             }
             "interrupt" => {

@@ -10,11 +10,14 @@ import {
   Plus,
   Search,
   Settings2,
+  Trash2,
   X,
 } from 'lucide-react';
 import type { Project, Session } from '../types';
 import { IconButton, Mark } from './Mark';
 import { ProjectList } from './Projects';
+
+export type SessionAction = 'rename' | 'delete';
 
 export default function Sidebar({
   collapsed,
@@ -37,7 +40,7 @@ export default function Sidebar({
   onOpenProject,
   onManageProject,
   onOpenSession,
-  onRequestRenameSession,
+  onManageSession,
   onExportSession,
   onOpenSettings,
 }: {
@@ -61,7 +64,7 @@ export default function Sidebar({
   onOpenProject: (project: Project) => void;
   onManageProject: (project: Project, action: 'rename' | 'remove') => void;
   onOpenSession: (session: Session) => void;
-  onRequestRenameSession: (session: Session) => void;
+  onManageSession: (session: Session, action: SessionAction) => void;
   onExportSession: (session: Session) => void;
   onOpenSettings: (tab: string) => void;
 }) {
@@ -216,7 +219,7 @@ export default function Sidebar({
                   role="menuitem"
                   onClick={() => {
                     setSessionMenu(null);
-                    onRequestRenameSession(session);
+                    onManageSession(session, 'rename');
                   }}
                 >
                   <Pencil size={13} />
@@ -232,6 +235,20 @@ export default function Sidebar({
                 >
                   <Download size={13} />
                   导出 JSON
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="session-delete"
+                  disabled={busy}
+                  title={busy ? '请等待当前操作结束后再删除会话' : undefined}
+                  onClick={() => {
+                    setSessionMenu(null);
+                    onManageSession(session, 'delete');
+                  }}
+                >
+                  <Trash2 size={13} />
+                  删除
                 </button>
               </div>
             )}
@@ -270,12 +287,14 @@ export default function Sidebar({
   );
 }
 
-export function SessionRenameDialog({
+export function SessionDialog({
   session,
+  action,
   onClose,
   onConfirm,
 }: {
   session: Session;
+  action: SessionAction;
   onClose: () => void;
   onConfirm: (title: string) => Promise<void>;
 }) {
@@ -283,6 +302,10 @@ export function SessionRenameDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const deleting = action === 'delete';
+  const heading = deleting ? '删除会话' : '重命名会话';
+  const confirmLabel = deleting ? '删除会话' : '保存标题';
+  const pendingLabel = deleting ? '正在删除…' : '正在保存…';
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -299,7 +322,7 @@ export function SessionRenameDialog({
 
   async function submit() {
     const trimmed = title.trim();
-    if (busy || !trimmed) return;
+    if (busy || (!deleting && !trimmed)) return;
     setBusy(true);
     setError('');
     try {
@@ -323,18 +346,19 @@ export function SessionRenameDialog({
         className="project-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="重命名会话"
+        aria-label={heading}
+        aria-describedby={deleting ? 'session-delete-description' : undefined}
         onSubmit={e => {
           e.preventDefault();
           void submit();
         }}
       >
         <header>
-          <h2>重命名会话</h2>
+          <h2>{heading}</h2>
           <button
             type="button"
             className="icon-button"
-            aria-label="关闭会话重命名"
+            aria-label={deleting ? '关闭会话删除确认' : '关闭会话重命名'}
             disabled={busy}
             onClick={onClose}
           >
@@ -342,16 +366,22 @@ export function SessionRenameDialog({
           </button>
         </header>
         <p className="project-dialog-path">{session.workspace}</p>
-        <label className="field">
-          会话标题
-          <input
-            ref={inputRef}
-            value={title}
-            maxLength={120}
-            aria-label="会话标题"
-            onChange={e => setTitle(e.target.value)}
-          />
-        </label>
+        {deleting ? (
+          <p id="session-delete-description" className="project-dialog-note">
+            确定永久删除“{session.title}”吗？此会话的消息和操作记录将一并删除，无法撤销。
+          </p>
+        ) : (
+          <label className="field">
+            会话标题
+            <input
+              ref={inputRef}
+              value={title}
+              maxLength={120}
+              aria-label="会话标题"
+              onChange={e => setTitle(e.target.value)}
+            />
+          </label>
+        )}
         {error && (
           <p className="project-dialog-error" role="alert">
             {error}
@@ -361,6 +391,7 @@ export function SessionRenameDialog({
           <button
             type="button"
             className="secondary-button"
+            autoFocus={deleting}
             disabled={busy}
             onClick={onClose}
           >
@@ -368,10 +399,10 @@ export function SessionRenameDialog({
           </button>
           <button
             type="submit"
-            className="primary-button"
-            disabled={busy || !title.trim()}
+            className={deleting ? 'secondary-button session-delete' : 'primary-button'}
+            disabled={busy || (!deleting && !title.trim())}
           >
-            {busy ? '正在保存…' : '保存标题'}
+            {busy ? pendingLabel : confirmLabel}
           </button>
         </footer>
       </form>

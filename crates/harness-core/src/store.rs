@@ -358,6 +358,14 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn delete_session(&self, id: &str) -> Result<()> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        tx.execute("DELETE FROM events WHERE session_id=?1", [id])?;
+        tx.execute("DELETE FROM sessions WHERE id=?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
     pub fn events(&self, id: &str) -> Result<Vec<Value>> {
         let db = self.db.lock().unwrap();
         let mut stmt = db.prepare(

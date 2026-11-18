@@ -13,7 +13,7 @@ import PerformancePanel, { applyUsage, initialUsage, numberValue, readMetrics } 
 import type { CompactionInfo, ModelMetrics } from './components/PerformancePanel';
 import { ProjectDialog } from './components/Projects';
 import Settings from './components/Settings';
-import Sidebar, { SessionRenameDialog } from './components/Sidebar';
+import Sidebar, { SessionDialog, type SessionAction } from './components/Sidebar';
 import TerminalPanel from './components/TerminalPanel';
 import UpdateControl, { useAppUpdates } from './components/UpdateControl';
 import WelcomeView from './components/WelcomeView';
@@ -47,7 +47,10 @@ export default function App() {
     project: Project;
     action: 'rename' | 'remove';
   } | null>(null);
-  const [renamingSession, setRenamingSession] = useState<Session | null>(null);
+  const [sessionDialog, setSessionDialog] = useState<{
+    session: Session;
+    action: SessionAction;
+  } | null>(null);
   const [current, setCurrent] = useState<Session | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [input, setInput] = useState('');
@@ -99,6 +102,7 @@ export default function App() {
   const pendingEventsRef = useRef<Json[]>([]);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bindingBusyRef = useRef(false);
+  const sessionListRevision = useRef(0);
   const settingsDirtyRef = useRef(true);
   const recordSettingsDirty = useCallback((dirty: boolean) => {
     settingsDirtyRef.current = dirty;
@@ -168,10 +172,11 @@ export default function App() {
 
   async function refresh() {
     if (!desktop) return;
+    const revision = sessionListRevision.current;
     try {
       const snapshot = await api<Snapshot>('snapshot');
       setConfig(snapshot.config);
-      setSessions(snapshot.sessions);
+      if (revision === sessionListRevision.current) setSessions(snapshot.sessions);
       setProjects(snapshot.projects ?? null);
     } catch (error) {
       notify(error);
@@ -262,7 +267,7 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (settings || projectDialog || renamingSession) return;
+      if (settings || projectDialog || sessionDialog) return;
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
       if (key === 'n') {
@@ -281,7 +286,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [settings, projectDialog, renamingSession, startNewChat, toggleSearch]);
+  }, [settings, projectDialog, sessionDialog, startNewChat, toggleSearch]);
 
   function applyProjectSelection(result: { config: Config; projects: Project[] }) {
     setConfig(result.config);
@@ -453,8 +458,27 @@ export default function App() {
     }
   }
 
-  async function renameSession(session: Session, title: string) {
+  async function manageSession(title: string) {
+    if (!sessionDialog) return;
+    const { session, action } = sessionDialog;
+    if (action === 'delete') {
+      if (bindingBusyRef.current) throw new Error('请等待当前操作结束后再删除会话');
+      const deletingCurrent = current?.id === session.id;
+      if (
+        deletingCurrent && file && fileText !== file.text &&
+        (workspace !== config.workspace || deviceId !== config.deviceId)
+      ) {
+        throw new Error('请先保存编辑中的文件，再删除当前会话');
+      }
+      await api('delete_session', { sessionId: session.id });
+      sessionListRevision.current += 1;
+      setSessions(old => old.filter(s => s.id !== session.id));
+      if (deletingCurrent) startNewChat();
+      notify('会话已删除');
+      return;
+    }
     await api('rename_session', { sessionId: session.id, title });
+    sessionListRevision.current += 1;
     setSessions(old => old.map(s => (s.id === session.id ? { ...s, title } : s)));
     setCurrent(curr => (curr?.id === session.id ? { ...curr, title } : curr));
     notify('会话标题已更新');
@@ -1061,7 +1085,7 @@ export default function App() {
     if (input || attachments.length || command) {
       return '请先发送或清空未提交的消息、图片和终端命令。';
     }
-    if (projectDialog || renamingSession || (settings && !fromSettings)) {
+    if (projectDialog || sessionDialog || (settings && !fromSettings)) {
       return '请先关闭设置或项目操作，再安装更新。';
     }
     if (settings && settingsDirtyRef.current) {
@@ -1085,7 +1109,7 @@ export default function App() {
     <div className="app-shell">
       <Sidebar
         collapsed={!sidebarOpen}
-        inert={updateInstalling}
+        inert={updateInstalling || !!sessionDialog}
         projects={projects}
         sessions={sessions}
         current={current}
@@ -1096,7 +1120,7 @@ export default function App() {
         shortcut={shortcut}
         filter={filter}
         searchOpen={searchOpen}
-        busy={running || terminalBusy || projectBusy}
+        busy={running || terminalBusy || projectBusy || restoreBusy}
         onNewChat={startNewChat}
         onToggleSearch={toggleSearch}
         onFilterChange={setFilter}
@@ -1104,12 +1128,12 @@ export default function App() {
         onOpenProject={project => void openProject(project)}
         onManageProject={(project, action) => setProjectDialog({ project, action })}
         onOpenSession={session => void openSession(session)}
-        onRequestRenameSession={session => setRenamingSession(session)}
+        onManageSession={(session, action) => setSessionDialog({ session, action })}
         onExportSession={session => void exportSession(session)}
         onOpenSettings={tab => setSettings(tab)}
       />
 
-      <main className="main-area" inert={updateInstalling || undefined}>
+      <main className="main-area" inert={updateInstalling || !!sessionDialog || undefined}>
         <header className="topbar" data-tauri-drag-region>
           <div className="breadcrumb">
             <IconButton
@@ -1412,12 +1436,13 @@ export default function App() {
         />
       )}
 
-      {renamingSession && (
-        <SessionRenameDialog
-          key={renamingSession.id}
-          session={renamingSession}
-          onClose={() => setRenamingSession(null)}
-          onConfirm={title => renameSession(renamingSession, title)}
+      {sessionDialog && (
+        <SessionDialog
+          key={sessionDialog.session.id}
+          session={sessionDialog.session}
+          action={sessionDialog.action}
+          onClose={() => setSessionDialog(null)}
+          onConfirm={manageSession}
         />
       )}
 

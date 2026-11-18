@@ -506,6 +506,20 @@ textarea {
   color: var(--faint);
 }
 
+.session-menu .session-delete,
+.project-dialog .session-delete {
+  color: var(--danger);
+}
+
+.project-dialog .session-delete {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+
+#session-delete-description {
+  overflow-wrap: anywhere;
+}
+
 .session-search-wrap {
   position: relative;
   margin: 4px 4px 2px;
