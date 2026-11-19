@@ -69,7 +69,7 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
   const className = codeElement?.props?.className || '';
   const langMatch = className.match(/language-([\w-]+)/);
   const lang = langMatch ? langMatch[1] : '';
-  const rawCode = extractNodeText(codeElement ? codeElement.props.children : children).replace(/\n$/, '');
+  const codeContent = codeElement ? codeElement.props.children : children;
 
   return (
     <div className="code-block">
@@ -79,7 +79,7 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
           type="button"
           className="code-copy-button"
           aria-label="复制代码"
-          onClick={() => copy(rawCode)}
+          onClick={() => copy(extractNodeText(codeContent).replace(/\n$/, ''))}
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
@@ -98,6 +98,14 @@ const markdownComponents = {
     </a>
   ),
 };
+
+const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  );
+});
 
 /** Completed messages retain their object identity while the live tail changes. */
 const ActivityCard = memo(function ActivityCard({
@@ -218,11 +226,7 @@ const ActivityCard = memo(function ActivityCard({
             ))}
           </div>
         )}
-        {item.text && (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {item.text}
-          </ReactMarkdown>
-        )}
+        {item.text && <MessageMarkdown text={item.text} />}
         {item.running && !item.text && (
           <span className="typing" aria-label="正在输入">
             <i />

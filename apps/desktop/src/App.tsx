@@ -644,12 +644,16 @@ export default function App() {
     setHistoryStart(Math.max(0, activities.length - HISTORY_WINDOW));
 
     const pending: Json[] = [];
+    const receivedDeltaTypes = new Set<string>();
+    let answerLength = 0;
+    let lastFlushAt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
     function flushEvents() {
       if (timer !== null) clearTimeout(timer);
       timer = null;
       if (pending.length === 0) return;
+      lastFlushAt = performance.now();
       const events = pending.splice(0);
       updateConversation(key, view => events.reduce(applyConversationEvent, view));
     }
@@ -662,14 +666,28 @@ export default function App() {
         if (turn.stopRequested && !turn.completed) void interruptTurn(turn);
       }
       if (event.type === 'turn_started') return;
+      if (event.type === 'context_usage') {
+        receivedDeltaTypes.clear();
+        answerLength = 0;
+      }
       if (event.type === 'text_delta' || event.type === 'reasoning_delta' || event.type === 'tool_output') {
+        const text = String(event.text || '');
+        if (event.type === 'text_delta') answerLength += text.length;
         const last = pending.at(-1);
         if (last?.type === event.type && last.callId === event.callId && last.stream === event.stream) {
-          last.text = String(last.text || '') + String(event.text || '');
+          last.text += text;
         } else {
-          pending.push({ ...event });
+          pending.push({ ...event, text });
         }
-        if (timer === null) timer = setTimeout(flushEvents, 32);
+        // Show the first delta immediately. Limit full Markdown parses during long replies.
+        const interval = answerLength >= 2048 ? 96 : 32;
+        const remaining = lastFlushAt + interval - performance.now();
+        if (!receivedDeltaTypes.has(event.type) || remaining <= 0) {
+          receivedDeltaTypes.add(event.type);
+          flushEvents();
+        } else if (timer === null) {
+          timer = setTimeout(flushEvents, remaining);
+        }
         return;
       }
       pending.push(event);
