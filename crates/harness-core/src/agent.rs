@@ -220,21 +220,22 @@ impl Harness {
             .collect();
         // Fixed schemas must not consume a small model's entire input window.
         // All deferred capabilities remain discoverable, with their full schemas.
-        let base_definitions: Vec<&Value> = definitions
-            .iter()
-            .filter(|d| active_names.contains(d["name"].as_str().unwrap_or("")))
-            .collect();
-        let tool_budget =
-            context::input_budget_for(connection.context_length, connection.output_budget()) / 2;
-        if context::estimate(&[], &json!(base_definitions)).saturating_sub(256) > tool_budget {
+        let schema_tokens = |names: &BTreeSet<String>| {
+            context::array_tokens(
+                definitions
+                    .iter()
+                    .filter(|d| names.contains(d["name"].as_str().unwrap_or(""))),
+            )
+        };
+        let tool_budget = match connection.max_output_tokens {
+            Some(limit) => context::input_budget_for(connection.context_length, limit),
+            None => context::input_budget(connection.context_length),
+        } / 2;
+        if schema_tokens(&active_names) > tool_budget {
             // A small terminal schema avoids a discovery round for common local
             // inspections. Permissions were already applied to definitions.
             active_names.retain(|name| matches!(name.as_str(), "tool_search" | "terminal_run"));
-            let minimal: Vec<&Value> = definitions
-                .iter()
-                .filter(|d| active_names.contains(d["name"].as_str().unwrap_or("")))
-                .collect();
-            if context::estimate(&[], &json!(minimal)).saturating_sub(256) > tool_budget {
+            if schema_tokens(&active_names) > tool_budget {
                 active_names.retain(|name| name == "tool_search");
             }
         }
@@ -242,7 +243,8 @@ impl Harness {
         for d in &definitions {
             mcp::validate_schema(&d["parameters"])?;
         }
-        let mut output_tokens = connection.output_budget();
+        let preferred_output = connection.output_budget();
+        let mut retry_output = None;
         let mut output_limit_retried = false;
 
         let mut corrections = 0;
@@ -267,25 +269,21 @@ impl Harness {
             }
             let active_definitions: Vec<Value> = definitions
                 .iter()
-                .filter(|d| active_names.contains(d["name"].as_str().unwrap_or("")))
+                .filter(|d| {
+                    !final_answer_retry && active_names.contains(d["name"].as_str().unwrap_or(""))
+                })
                 .cloned()
                 .collect();
             let tools: Vec<ToolDefinition> = active_definitions
                 .iter()
-                .filter(|_| !final_answer_retry)
                 .map(|d| ToolDefinition {
                     name: d["name"].as_str().unwrap().into(),
                     description: d["description"].as_str().unwrap_or("").into(),
                     parameters: d["parameters"].clone(),
                 })
                 .collect();
-            let tools_value = if final_answer_retry {
-                json!([])
-            } else {
-                serde_json::to_value(&active_definitions)?
-            };
-            let mut estimated_budget =
-                context::input_budget_for(connection.context_length, output_tokens);
+            let tool_tokens = context::array_tokens(&active_definitions);
+            let mut output_tokens = retry_output.unwrap_or(preferred_output);
             context::drop_old_images(&mut messages);
             let workflow = if active_names.contains("task_checkpoint")
                 || task_state
@@ -314,13 +312,13 @@ impl Harness {
             let mut request = vec![message("system", json!(&system))];
             request.extend(messages.clone());
             append_runtime_context(&mut request, &task_state, &computer);
-            let raw_estimate = context::estimate(&request, &tools_value);
+            let raw_estimate = context::estimate_messages(&request) + tool_tokens;
             let conservative_estimate = calibration.apply(raw_estimate);
             let mut estimate = conservative_estimate;
-            let mut budget = estimated_budget;
+            let mut capacity = context::input_budget_for(connection.context_length, 0);
             let mut measured_prompt = false;
             if connection.resolved_backend() == "llama_cpp"
-                && conservative_estimate >= budget.saturating_mul(3) / 4
+                && estimate > capacity.saturating_sub(output_tokens)
             {
                 let (permit, _) = self
                     .acquire_inference(&connection, &cancel, Some(&sink))
@@ -331,13 +329,20 @@ impl Harness {
                 {
                     estimate = count;
                     measured_prompt = true;
-                    budget = context::measured_input_budget_for(
-                        connection.context_length,
-                        output_tokens,
-                    );
+                    capacity = context::measured_input_budget_for(connection.context_length, 0);
                 }
                 drop(permit);
             }
+            // Lend unused generation space to this prompt before unloading tools.
+            // Explicit limits and a reasoning retry reserve their requested space.
+            let available_output = capacity.saturating_sub(estimate);
+            if connection.max_output_tokens.is_none()
+                && retry_output.is_none()
+                && (256..output_tokens).contains(&available_output)
+            {
+                output_tokens = available_output;
+            }
+            let budget = capacity.saturating_sub(output_tokens);
             // Reclaim schema overhead before summarizing user history. Keep
             // explicitly discovered tools so tool_search never loses its result.
             if estimate > budget && !final_answer_retry && base_names.len() > 1 {
@@ -348,33 +353,9 @@ impl Harness {
                 );
                 continue;
             }
-            // An automatic output reserve is a ceiling, not a reason to reject
-            // input that fits. Explicit limits and a thinking retry stay intact.
-            if estimate > budget && connection.max_output_tokens.is_none() && !output_limit_retried
-            {
-                let safety = if measured_prompt {
-                    connection.context_length.div_ceil(20).max(256)
-                } else {
-                    connection.context_length.div_ceil(5)
-                };
-                let available = connection
-                    .context_length
-                    .saturating_sub(estimate.saturating_add(safety));
-                if available >= 256 && available < output_tokens {
-                    output_tokens = available;
-                    estimated_budget =
-                        context::input_budget_for(connection.context_length, output_tokens);
-                    budget = if measured_prompt {
-                        context::measured_input_budget_for(connection.context_length, output_tokens)
-                    } else {
-                        estimated_budget
-                    };
-                    sink(
-                        json!({"type":"status","text":format!("已按剩余上下文将本轮自动输出上限调整为 {output_tokens} token")}),
-                    );
-                }
-            }
             if estimate > budget {
+                let estimated_budget =
+                    context::input_budget_for(connection.context_length, output_tokens);
                 let split = context::split_for_compaction(&messages).with_context(|| {
                     format!("当前输入与必要工具约需 {estimate} token，可用输入预算为 {budget} token（已加载上下文 {}，输出预留 {output_tokens}）。没有可压缩的历史；请减少附件或输入、降低输出上限，或在设置中重新加载更大上下文。原始消息已保留。", connection.context_length)
                 })?;
@@ -383,7 +364,7 @@ impl Harness {
                     let mut request = vec![message("system", json!(&system))];
                     request.extend_from_slice(projection);
                     append_runtime_context(&mut request, &task_state, &computer);
-                    calibration.apply(context::estimate(&request, &tools_value))
+                    calibration.apply(context::estimate_messages(&request) + tool_tokens)
                 };
                 let mut compacted = context::continuation_from_split(
                     &user_history,
@@ -461,7 +442,7 @@ impl Harness {
                 continue;
             }
             sink(
-                json!({"type":"context_usage","inputTokens":estimate,"contextLength":connection.context_length,"isEstimated":!measured_prompt,"countSource":if measured_prompt {"llama_cpp_template_tokenizer"} else {"estimate"},"step":step,"budget":budget,"outputReserve":output_tokens,"toolCount":tools.len(),"toolTokens":context::estimate(&[],&tools_value).saturating_sub(256)}),
+                json!({"type":"context_usage","inputTokens":estimate,"contextLength":connection.context_length,"isEstimated":!measured_prompt,"countSource":if measured_prompt {"llama_cpp_template_tokenizer"} else {"estimate"},"step":step,"budget":budget,"outputReserve":output_tokens,"toolCount":tools.len(),"toolTokens":tool_tokens}),
             );
             let (permit, queue_wait_ms) = self
                 .acquire_inference(&connection, &cancel, Some(&sink))
@@ -472,10 +453,9 @@ impl Harness {
             let mut actual_usage = None;
             let (tx, mut rx) = mpsc::channel(256);
             let p = provider.clone();
-            let t = tools.clone();
             let c = cancel.clone();
             let worker =
-                tokio::spawn(async move { p.generate(request, t, output_tokens, tx, c).await });
+                tokio::spawn(async move { p.generate(request, tools, output_tokens, tx, c).await });
             let mut text = String::new();
             let mut reasoning = String::new();
             let mut calls: Vec<ToolCall> = vec![];
@@ -522,6 +502,7 @@ impl Harness {
                 }
             }
             let result = worker.await.context("模型请求任务退出")?;
+            retry_output = None;
             drop(permit); // Tools do not hold the scarce inference/KV-cache slot.
             let duration_ms = model_started.elapsed().as_millis();
             // This is end-to-end request throughput including prefill/network,
@@ -559,7 +540,7 @@ impl Harness {
                         let event = json!({"type":"model_retry","reason":"output_token_limit","previousOutputTokens":output_tokens,"outputTokens":increased});
                         self.store.append(id, "activity", &event)?;
                         sink(event);
-                        output_tokens = increased;
+                        retry_output = Some(increased);
                         output_limit_retried = true;
                         continue;
                     }
@@ -578,7 +559,8 @@ impl Harness {
                         let mut reduced_request = vec![message("system", json!(&system))];
                         reduced_request.extend(reduced.clone());
                         append_runtime_context(&mut reduced_request, &task_state, &computer);
-                        if calibration.apply(context::estimate(&reduced_request, &tools_value))
+                        if calibration
+                            .apply(context::estimate_messages(&reduced_request) + tool_tokens)
                             < conservative_estimate
                         {
                             messages = reduced;
@@ -872,8 +854,7 @@ impl Harness {
                                     .take(6usize.saturating_sub(keep.len()))
                                 {
                                     page.push((*definition).clone());
-                                    let tokens =
-                                        context::estimate(&[], &json!(&page)).saturating_sub(256);
+                                    let tokens = context::array_tokens(&page);
                                     // Always allow one match when nothing is
                                     // pinned, so even a large schema is reachable.
                                     if tokens > tool_budget

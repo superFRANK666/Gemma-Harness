@@ -130,7 +130,7 @@ impl ConnectionConfig {
     }
     pub fn output_budget(&self) -> usize {
         self.max_output_tokens
-            .unwrap_or_else(|| 2048.min(self.context_length / 4).max(256))
+            .unwrap_or_else(|| (self.context_length / 3).clamp(256, 16_384))
     }
 }
 

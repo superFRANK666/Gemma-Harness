@@ -91,6 +91,9 @@ pub fn continuation_from_split(
 // Conservative UTF-8 byte estimate. This is intentionally labelled an estimate,
 // not exact Gemma tokenization. Tool definitions and image allowance are included.
 pub fn estimate(messages: &[ChatMessage], tools: &Value) -> usize {
+    estimate_messages(messages) + value_tokens(tools)
+}
+pub(crate) fn estimate_messages(messages: &[ChatMessage]) -> usize {
     // Walk borrowed data. Serializing/cloning an entire screenshot just to replace
     // its base64 URL previously allocated tens of MiB per request.
     messages
@@ -113,18 +116,25 @@ pub fn estimate(messages: &[ChatMessage], tools: &Value) -> usize {
                     .sum::<usize>()
         })
         .sum::<usize>()
-        + value_tokens(tools)
         + 256
 }
 fn text_tokens(text: &str) -> usize {
-    let ascii = text.bytes().filter(u8::is_ascii).count();
-    let non_ascii = text.chars().filter(|c| !c.is_ascii()).count();
+    let mut ascii = 0usize;
+    let mut non_ascii = 0;
+    for byte in text.bytes() {
+        ascii += usize::from(byte.is_ascii());
+        // Each non-ASCII scalar has one UTF-8 leading byte in 0xc0..=0xff.
+        non_ascii += usize::from(byte >= 0xc0);
+    }
     ascii.div_ceil(3) + non_ascii * 2
+}
+pub(crate) fn array_tokens<'a>(values: impl IntoIterator<Item = &'a Value>) -> usize {
+    2 + values.into_iter().map(value_tokens).sum::<usize>()
 }
 fn value_tokens(value: &Value) -> usize {
     match value {
         Value::String(s) => text_tokens(s) + 2,
-        Value::Array(items) => 2 + items.iter().map(value_tokens).sum::<usize>(),
+        Value::Array(items) => array_tokens(items),
         Value::Object(object)
             if object.get("type").and_then(Value::as_str) == Some("image_url") =>
         {
@@ -250,17 +260,18 @@ fn count_images(value: &Value) -> usize {
         _ => 0,
     }
 }
+/// Input space used to size the initial tool catalog before the prompt is known.
 pub fn input_budget(context: usize) -> usize {
     let reserve = 2048.min(context / 4);
     input_budget_for(context, reserve)
 }
 pub fn input_budget_for(context: usize, reserve: usize) -> usize {
-    context.saturating_sub(reserve.saturating_add(context.div_ceil(5)))
+    context.saturating_sub(reserve.saturating_add(context.div_ceil(5).min(2048)))
 }
 /// A rendered, tokenized text prompt needs a smaller margin than the
 /// uncalibrated estimate, but still reserves space for runtime differences.
 pub fn measured_input_budget_for(context: usize, reserve: usize) -> usize {
-    context.saturating_sub(reserve.saturating_add(context.div_ceil(20).max(256)))
+    context.saturating_sub(reserve.saturating_add(context.div_ceil(20).clamp(256, 512)))
 }
 pub fn is_input_overflow(description: &str) -> bool {
     let lower = description.to_lowercase();
