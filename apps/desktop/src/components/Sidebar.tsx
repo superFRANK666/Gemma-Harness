@@ -4,6 +4,7 @@ import {
   Circle,
   Download,
   FolderOpen,
+  Loader2,
   Monitor,
   MoreHorizontal,
   Pencil,
@@ -33,6 +34,7 @@ export default function Sidebar({
   filter,
   searchOpen,
   busy,
+  runningChats,
   onNewChat,
   onToggleSearch,
   onFilterChange,
@@ -57,6 +59,7 @@ export default function Sidebar({
   filter: string;
   searchOpen: boolean;
   busy: boolean;
+  runningChats: ReadonlySet<string>;
   onNewChat: () => void;
   onToggleSearch: () => void;
   onFilterChange: (value: string) => void;
@@ -186,12 +189,17 @@ export default function Sidebar({
             <button
               type="button"
               className={`session-item ${current?.id === session.id ? 'selected' : ''}`}
+              aria-description={runningChats.has(session.id) ? '会话运行中' : undefined}
               onClick={() => {
                 setSessionMenu(null);
                 onOpenSession(session);
               }}
             >
-              <Circle size={7} fill="currentColor" aria-hidden="true" />
+              {runningChats.has(session.id) ? (
+                <Loader2 size={12} className="spin" aria-hidden="true" />
+              ) : (
+                <Circle size={7} fill="currentColor" aria-hidden="true" />
+              )}
               <span>{session.title}</span>
               {session.deviceId !== 'local' && <Monitor size={12} aria-hidden="true" />}
             </button>

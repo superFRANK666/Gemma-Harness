@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use harness_core::Harness;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{ipc::Channel, Manager, State};
 
@@ -19,19 +19,25 @@ async fn stream_turn(
     input: String,
     images: Option<Vec<String>>,
     on_event: Channel<Value>,
-) -> Result<(), String> {
-    state
+) -> Result<Value, String> {
+    let stream = on_event.clone();
+    let result = state
         .inner()
         .turn_with_images(
             session_id,
             input,
             images.unwrap_or_default(),
             Arc::new(move |event| {
-                let _ = on_event.send(event);
+                let _ = stream.send(event);
             }),
         )
-        .await
-        .map_err(|e| format!("{e:#}"))
+        .await;
+    on_event
+        .send(json!({"type": "stream_ended"}))
+        .map_err(|error| format!("发送会话结束事件失败：{error}"))?;
+    Ok(json!({
+        "error": result.err().map(|error| format!("{error:#}")),
+    }))
 }
 #[tauri::command]
 async fn stream_tool(

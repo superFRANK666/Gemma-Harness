@@ -9,8 +9,7 @@ import Composer from './components/Composer';
 import InspectorPanel from './components/InspectorPanel';
 import type { OpenFileState } from './components/InspectorPanel';
 import { IconButton } from './components/Mark';
-import PerformancePanel, { applyUsage, initialUsage, numberValue, readMetrics } from './components/PerformancePanel';
-import type { CompactionInfo, ModelMetrics } from './components/PerformancePanel';
+import PerformancePanel, { initialUsage } from './components/PerformancePanel';
 import { ProjectDialog } from './components/Projects';
 import Settings from './components/Settings';
 import Sidebar, { SessionDialog, type SessionAction } from './components/Sidebar';
@@ -18,16 +17,17 @@ import TerminalPanel from './components/TerminalPanel';
 import UpdateControl, { useAppUpdates } from './components/UpdateControl';
 import WelcomeView from './components/WelcomeView';
 import {
+  applyConversationEvent,
+  emptyActivities,
+  emptyConversation,
+  releaseConversationHistory,
+} from './utils/conversation';
+import type { Conversation } from './utils/conversation';
+import {
   basename,
   buildActivitiesFromEvents,
-  compactionText,
-  findLastToolIndex,
   HISTORY_WINDOW,
   LIVE_TRUNCATION_NOTICE,
-  loopGuardText,
-  metricKey,
-  modelRetryText,
-  savedTokens,
   terminalResultNotices,
 } from './utils/sessionEvents';
 
@@ -35,6 +35,13 @@ const withoutAppearance = (config: Config) => {
   const copy = { ...config };
   delete copy.appearance;
   return JSON.stringify(copy);
+};
+
+type RunningTurn = {
+  sessionId?: string;
+  started: boolean;
+  completed: boolean;
+  stopRequested: boolean;
 };
 
 export default function App() {
@@ -51,11 +58,20 @@ export default function App() {
     session: Session;
     action: SessionAction;
   } | null>(null);
-  const [current, setCurrent] = useState<Session | null>(null);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [input, setInput] = useState('');
-  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
-  const [running, setRunning] = useState(false);
+  const [conversations, setConversations] = useState(() => {
+    const draft: string = crypto.randomUUID();
+    return { selected: draft, draft, chats: new Map<string, Conversation>() };
+  });
+  const chatKey = conversations.selected;
+  const chat = conversations.chats.get(chatKey) ?? emptyConversation;
+  const { session: current, input, attachments, running, status, terminal, command } = chat;
+  const { metrics, queueSince, queueWaitMs, compaction } = chat;
+  const activities = chat.activities ?? emptyActivities;
+  const runningChats = new Set<string>();
+  for (const [key, view] of conversations.chats) {
+    if (view.running) runningChats.add(key);
+  }
+  const anyRunning = runningChats.size > 0;
   const [settings, setSettings] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -70,17 +86,9 @@ export default function App() {
   const [inspecting, setInspecting] = useState(false);
   const [computerKind, setComputerKind] = useState('desktop');
   const [previewImage, setPreviewImage] = useState('');
-  const [usage, setUsage] = useState(initialUsage());
-  const [metrics, setMetrics] = useState<ModelMetrics | null>(null);
-  const [queueSince, setQueueSince] = useState<number | null>(null);
-  const [queueWaitMs, setQueueWaitMs] = useState<number | null>(null);
-  const [compaction, setCompaction] = useState<CompactionInfo>({ count: 0 });
   const [performanceOpen, setPerformanceOpen] = useState(false);
   const [historyStart, setHistoryStart] = useState(0);
   const [chatAtBottom, setChatAtBottom] = useState(true);
-  const [status, setStatus] = useState('就绪');
-  const [terminal, setTerminal] = useState<string | null>(null);
-  const [command, setCommand] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -92,24 +100,21 @@ export default function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const unverifiedToolRef = useRef(false);
   const inspectorBindingRef = useRef(0);
-  const metricBindingRef = useRef('');
   const chatFollowRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatResetFollowRef = useRef(false);
   const historyAnchorRef = useRef<{ height: number; top: number } | null>(null);
-  const pendingEventsRef = useRef<Json[]>([]);
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const turns = useRef(new Map<string, RunningTurn>());
   const bindingBusyRef = useRef(false);
+  const navigationRevision = useRef(0);
   const sessionListRevision = useRef(0);
   const settingsDirtyRef = useRef(true);
   const recordSettingsDirty = useCallback((dirty: boolean) => {
     settingsDirtyRef.current = dirty;
   }, []);
 
-  bindingBusyRef.current =
-    running || terminalBusy || projectBusy || restoreBusy || updateInstalling;
+  const hasActiveWork = useCallback(() => bindingBusyRef.current || turns.current.size > 0, []);
 
   const configRef = useRef(config);
   configRef.current = config;
@@ -120,6 +125,9 @@ export default function App() {
   const modelId = connection?.model?.trim() || '';
   const workspace = current?.workspace || config.workspace;
   const deviceId = current?.deviceId || config.deviceId;
+  const usage = chat.usage ?? initialUsage(connection?.contextLength || 8192);
+  const visibleBinding = useRef({ workspace, deviceId, dirty: false });
+  visibleBinding.current = { workspace, deviceId, dirty: !!file && fileText !== file.text };
   const deviceName =
     deviceId === 'local'
       ? '本机'
@@ -137,25 +145,33 @@ export default function App() {
     [],
   );
 
-  const performanceBinding = metricKey(
-    current?.id,
-    connection?.id,
-    connection?.contextLength,
-  );
+  const updateConversation = useCallback((key: string, update: (view: Conversation) => Conversation) => {
+    setConversations(state => {
+      const stored = state.chats.get(key);
+      if (!stored && key !== state.selected && key !== state.draft) return state;
+      const previous = stored ?? emptyConversation;
+      const next = update(previous);
+      if (previous === next) return state;
+      return { ...state, chats: new Map(state.chats).set(key, next) };
+    });
+  }, []);
 
-  function resetPerformance(context = connection?.contextLength || 8192) {
-    setUsage(initialUsage(context));
-    setMetrics(null);
-    setQueueSince(null);
-    setQueueWaitMs(null);
-    setCompaction({ count: 0 });
-  }
-
-  useLayoutEffect(() => {
-    if (metricBindingRef.current === performanceBinding) return;
-    metricBindingRef.current = performanceBinding;
-    resetPerformance();
-  }, [performanceBinding]);
+  const selectConversation = useCallback((key: string, activityCount = 0, restored?: Partial<Conversation>) => {
+    navigationRevision.current += 1;
+    chatFollowRef.current = true;
+    chatResetFollowRef.current = true;
+    setChatAtBottom(true);
+    historyAnchorRef.current = null;
+    setHistoryStart(Math.max(0, activityCount - HISTORY_WINDOW));
+    setConversations(state => {
+      const chats = new Map(state.chats);
+      if (state.selected !== key && state.selected !== state.draft) {
+        releaseConversationHistory(chats, state.selected);
+      }
+      if (restored) chats.set(key, { ...(chats.get(key) ?? emptyConversation), ...restored });
+      return { ...state, selected: key, chats };
+    });
+  }, []);
 
   useLayoutEffect(() => {
     inspectorBindingRef.current += 1;
@@ -167,17 +183,19 @@ export default function App() {
     setInspection('');
     setPreviewImage('');
     setPanel('files');
-    setAttachments([]);
+    setInspecting(false);
   }, [workspace, deviceId]);
 
-  async function refresh() {
+  async function refresh(sessionsOnly = false) {
     if (!desktop) return;
-    const revision = sessionListRevision.current;
+    const revision = ++sessionListRevision.current;
     try {
       const snapshot = await api<Snapshot>('snapshot');
-      setConfig(snapshot.config);
       if (revision === sessionListRevision.current) setSessions(snapshot.sessions);
-      setProjects(snapshot.projects ?? null);
+      if (!sessionsOnly) {
+        setConfig(snapshot.config);
+        setProjects(snapshot.projects ?? null);
+      }
     } catch (error) {
       notify(error);
     }
@@ -218,44 +236,22 @@ export default function App() {
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [activities, historyStart]);
-
-  useEffect(
-    () => () => {
-      if (pendingTimerRef.current !== null) clearTimeout(pendingTimerRef.current);
-      pendingEventsRef.current = [];
-    },
-    [],
-  );
+  }, [activities, chatKey, historyStart]);
 
   const startNewChat = useCallback(() => {
     if (bindingBusyRef.current) {
-      notify('请先停止当前任务或终端命令');
+      notify('请等待当前操作完成后再新建会话');
       return;
     }
-    if (pendingTimerRef.current !== null) clearTimeout(pendingTimerRef.current);
-    pendingTimerRef.current = null;
-    pendingEventsRef.current = [];
     const latestConfig = configRef.current;
-    const selected = latestConfig.connections.find(
-      c => c.id === latestConfig.selectedConnectionId,
-    );
-    metricBindingRef.current = metricKey(
-      undefined,
-      selected?.id,
-      selected?.contextLength,
-    );
-    resetPerformance(selected?.contextLength || 8192);
-    chatFollowRef.current = true;
-    chatResetFollowRef.current = true;
-    setChatAtBottom(true);
-    historyAnchorRef.current = null;
-    setCurrent(null);
-    setActivities([]);
-    setHistoryStart(0);
-    setStatus('就绪');
+    const binding = visibleBinding.current;
+    if (binding.dirty && (binding.workspace !== latestConfig.workspace || binding.deviceId !== latestConfig.deviceId)) {
+      notify('请先保存编辑内容，再新建会话');
+      return;
+    }
+    selectConversation(conversations.draft);
     inputRef.current?.focus();
-  }, [notify]);
+  }, [conversations.draft, notify, selectConversation]);
 
   const toggleSearch = useCallback(() => {
     setSidebarOpen(true);
@@ -291,19 +287,13 @@ export default function App() {
   function applyProjectSelection(result: { config: Config; projects: Project[] }) {
     setConfig(result.config);
     setProjects(result.projects);
-    setCurrent(null);
-    setActivities([]);
-    setHistoryStart(0);
+    selectConversation(conversations.draft);
     setFiles(null);
     setDiffResult(null);
-    setStatus('就绪');
-    chatFollowRef.current = true;
-    chatResetFollowRef.current = true;
-    setChatAtBottom(true);
   }
 
   async function selectWorkspace() {
-    if (bindingBusyRef.current) {
+    if (hasActiveWork()) {
       notify('请先停止当前任务或终端命令，再切换项目');
       return;
     }
@@ -336,7 +326,7 @@ export default function App() {
   }
 
   async function openProject(project: Project) {
-    if (bindingBusyRef.current) {
+    if (hasActiveWork()) {
       notify('请先停止当前任务或终端命令，再切换项目');
       return;
     }
@@ -367,7 +357,7 @@ export default function App() {
   async function manageProject(name: string) {
     if (!projectDialog) return;
     const { project, action } = projectDialog;
-    if (action === 'remove' && bindingBusyRef.current) {
+    if (action === 'remove' && hasActiveWork()) {
       throw new Error('请先停止当前任务或终端命令，再移除项目');
     }
     if (
@@ -390,12 +380,9 @@ export default function App() {
       project.workspace === workspace &&
       project.deviceId === deviceId
     ) {
-      setCurrent(null);
-      setActivities([]);
-      setHistoryStart(0);
+      selectConversation(conversations.draft);
       setFiles(null);
       setDiffResult(null);
-      setStatus('就绪');
     }
     notify(
       action === 'rename'
@@ -406,55 +393,46 @@ export default function App() {
 
   async function openSession(session: Session) {
     if (bindingBusyRef.current) {
-      notify('请先停止当前任务或终端命令');
+      notify('请等待当前操作完成后再切换会话');
       return;
     }
-    const switchingBinding =
-      session.workspace !== workspace || session.deviceId !== deviceId;
-    if (file && fileText !== file.text && switchingBinding) {
+    const revision = ++navigationRevision.current;
+    if (chatKey === session.id) return;
+    const needsSave = () => {
+      const binding = visibleBinding.current;
+      return binding.dirty && (session.workspace !== binding.workspace || session.deviceId !== binding.deviceId);
+    };
+    if (needsSave()) {
       notify('请先保存编辑内容，再切换会话');
       return;
     }
-    bindingBusyRef.current = true;
-    setProjectBusy(true);
+    const cached = conversations.chats.get(session.id);
+    if (cached?.activities) {
+      selectConversation(session.id, cached.activities.length);
+      return;
+    }
     try {
-      const result = await api<{ events: { kind: string; payload: Json }[] }>(
+      const result = await api<{ session?: Session; events: { kind: string; payload: Json }[] }>(
         'load_session',
         { sessionId: session.id },
       );
-      const selected = config.connections.find(c => c.id === session.connectionId);
-      const restored = buildActivitiesFromEvents(
-        result.events,
-        selected?.contextLength || 8192,
-      );
-      metricBindingRef.current = metricKey(
-        session.id,
-        selected?.id,
-        selected?.contextLength,
-      );
-      setUsage(restored.usage);
-      setMetrics(restored.metrics);
-      setQueueSince(null);
-      setQueueWaitMs(restored.waitMs);
-      setCompaction(restored.compaction);
-      chatFollowRef.current = true;
-      chatResetFollowRef.current = true;
-      setChatAtBottom(true);
-      historyAnchorRef.current = null;
-      setHistoryStart(Math.max(0, restored.list.length - HISTORY_WINDOW));
-      setActivities(restored.list);
-      setCurrent(session);
-      if (switchingBinding) {
-        setFile(null);
-        setFiles(null);
-        setDiffResult(null);
+      if (revision !== navigationRevision.current || bindingBusyRef.current) return;
+      if (needsSave()) {
+        notify('请先保存编辑内容，再切换会话');
+        return;
       }
-      setStatus('就绪');
+      const selected = configRef.current.connections.find(c => c.id === session.connectionId);
+      const restored = buildActivitiesFromEvents(result.events, selected?.contextLength || 8192);
+      selectConversation(session.id, restored.list.length, {
+        session: result.session ?? session,
+        activities: restored.list,
+        usage: restored.usage,
+        metrics: restored.metrics,
+        queueWaitMs: restored.waitMs,
+        compaction: restored.compaction,
+      });
     } catch (error) {
-      notify(error);
-    } finally {
-      bindingBusyRef.current = false;
-      setProjectBusy(false);
+      if (revision === navigationRevision.current) notify(error);
     }
   }
 
@@ -462,7 +440,7 @@ export default function App() {
     if (!sessionDialog) return;
     const { session, action } = sessionDialog;
     if (action === 'delete') {
-      if (bindingBusyRef.current) throw new Error('请等待当前操作结束后再删除会话');
+      if (hasActiveWork()) throw new Error('请等待当前操作结束后再删除会话');
       const deletingCurrent = current?.id === session.id;
       if (
         deletingCurrent && file && fileText !== file.text &&
@@ -470,9 +448,15 @@ export default function App() {
       ) {
         throw new Error('请先保存编辑中的文件，再删除当前会话');
       }
+      navigationRevision.current += 1;
       await api('delete_session', { sessionId: session.id });
       sessionListRevision.current += 1;
       setSessions(old => old.filter(s => s.id !== session.id));
+      setConversations(state => {
+        const chats = new Map(state.chats);
+        chats.delete(session.id);
+        return { ...state, chats };
+      });
       if (deletingCurrent) startNewChat();
       notify('会话已删除');
       return;
@@ -480,7 +464,7 @@ export default function App() {
     await api('rename_session', { sessionId: session.id, title });
     sessionListRevision.current += 1;
     setSessions(old => old.map(s => (s.id === session.id ? { ...s, title } : s)));
-    setCurrent(curr => (curr?.id === session.id ? { ...curr, title } : curr));
+    updateConversation(session.id, view => view.session ? { ...view, session: { ...view.session, title } } : view);
     notify('会话标题已更新');
   }
 
@@ -508,8 +492,9 @@ export default function App() {
     (itemId: string, operationId: string) => {
       void api('remote_operation_status', { sessionId: current?.id, operationId })
         .then(result =>
-          setActivities(old =>
-            old.map(item =>
+          updateConversation(chatKey, view => view.activities ? {
+            ...view,
+            activities: view.activities.map(item =>
               item.id === itemId
                 ? {
                     ...item,
@@ -523,16 +508,16 @@ export default function App() {
                   }
                 : item,
             ),
-          ),
+          } : view),
         )
         .catch(notify);
     },
-    [current?.id, notify],
+    [chatKey, current?.id, notify, updateConversation],
   );
 
   const restoreDeleted = useCallback(
     (callId: string) => {
-      if (!current?.id || bindingBusyRef.current) return;
+      if (!current?.id || hasActiveWork()) return;
       bindingBusyRef.current = true;
       setRestoreBusy(true);
       void api('restore_deleted_file', { sessionId: current.id, callId })
@@ -541,14 +526,14 @@ export default function App() {
             throw new Error('没有收到恢复成功的结果，请检查文件状态');
           }
           setFiles(null);
-          setActivities(old => [
-            ...old,
-            {
+          updateConversation(chatKey, view => ({
+            ...view,
+            activities: [...(view.activities ?? emptyActivities), {
               id: crypto.randomUUID(),
               role: 'status',
               text: `已恢复 ${String(result.path || '')}`,
-            },
-          ]);
+            }],
+          }));
           if (result.historyWarning) notify(result.historyWarning);
         })
         .catch(notify)
@@ -557,227 +542,11 @@ export default function App() {
           setRestoreBusy(false);
         });
     },
-    [current?.id, notify],
+    [chatKey, current?.id, hasActiveWork, notify, updateConversation],
   );
-
-  function applyEvent(event: Json) {
-    const type = String(event.type);
-    if (type === 'text_delta' || type === 'reasoning_delta') {
-      setActivities(old => {
-        const list = [...old];
-        let last = list.at(-1);
-        if (!last || last.role !== 'assistant' || !last.running) {
-          last = {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            text: '',
-            running: true,
-          };
-          list.push(last);
-        }
-        list[list.length - 1] =
-          type === 'text_delta'
-            ? { ...last, text: last.text + String(event.text) }
-            : { ...last, reasoning: (last.reasoning || '') + String(event.text) };
-        return list;
-      });
-      setStatus(type === 'reasoning_delta' ? '思考中' : '生成中');
-    } else if (type === 'assistant_completed') {
-      setActivities(old => {
-        const hasRunning = old.some(item => item.role === 'assistant' && item.running);
-        const finalText = typeof event.text === 'string' ? event.text : '';
-        if (hasRunning) {
-          return old.map(item =>
-            item.role === 'assistant' && item.running
-              ? { ...item, running: false, text: item.text || finalText }
-              : item,
-          );
-        }
-        return finalText
-          ? [...old, { id: crypto.randomUUID(), role: 'assistant', text: finalText }]
-          : old;
-      });
-    } else if (type === 'tool_started') {
-      setStatus(`正在执行 ${String(event.name)}`);
-      setActivities(old => [
-        ...old,
-        {
-          id: crypto.randomUUID(),
-          callId: String(event.callId),
-          role: 'tool',
-          name: String(event.name),
-          text: '',
-          args: String(event.arguments),
-          deviceId: String(event.deviceId),
-          running: true,
-        },
-      ]);
-    } else if (type === 'tool_output') {
-      setActivities(old => {
-        const idx = findLastToolIndex(old, event.callId);
-        if (idx === -1) return old;
-        const next = [...old];
-        next[idx] = { ...next[idx], text: next[idx].text + String(event.text || '') };
-        return next;
-      });
-      setTerminal(old => (old ?? '') + String(event.text || ''));
-    } else if (type === 'tool_completed') {
-      setActivities(old => {
-        const idx = findLastToolIndex(old, event.callId);
-        if (idx === -1) return old;
-        const next = [...old];
-        next[idx] = {
-          ...next[idx],
-          running: false,
-          result: event.result,
-          durationMs: Number(event.durationMs),
-        };
-        return next;
-      });
-      if (String(event.name).startsWith('file_')) {
-        setFiles(null);
-        setDiffResult(null);
-      }
-      if (event.name === 'terminal_run') {
-        const notices = terminalResultNotices((event.result ?? {}) as Json, false);
-        setTerminal(old => (old ?? '') + '\n' + (notices.length > 0
-          ? notices.join('\n') : '[命令结束，详细结果保存在工具卡片]') + '\n');
-      }
-    } else if (type === 'context_usage' || type === 'usage') {
-      setUsage(u => applyUsage(u, event));
-      if (type === 'context_usage') setStatus('准备模型响应');
-    } else if (type === 'inference_queued') {
-      setQueueSince(Date.now());
-      setQueueWaitMs(null);
-      setStatus('排队等待推理资源');
-    } else if (type === 'inference_acquired') {
-      setQueueSince(null);
-      setQueueWaitMs(numberValue(event.waitMs) ?? null);
-      setStatus('准备模型响应');
-    } else if (type === 'model_metrics') {
-      const measured = readMetrics(event);
-      setMetrics(measured);
-      setQueueWaitMs(old => measured.queueWaitMs ?? old);
-    } else if (type === 'compaction_started') {
-      setStatus('正在压缩上下文');
-    } else if (type === 'tool_batch_rejected') {
-      setStatus('正在纠正工具参数');
-      setActivities(old => [
-        ...old,
-        {
-          id: crypto.randomUUID(),
-          role: 'status',
-          text: `工具调用未执行：${String(event.message || '')}`,
-        },
-      ]);
-    } else if (type === 'model_retry') {
-      const empty = event.reason === 'empty_final_after_tool';
-      setStatus(empty ? '正在整理工具结果' : '正在增加思考预算并重试');
-      setActivities(old => [
-        ...old.map(item =>
-          item.role === 'assistant' && item.running
-            ? { ...item, running: false }
-            : item,
-        ),
-        { id: crypto.randomUUID(), role: 'status', text: modelRetryText(event) },
-      ]);
-    } else if (type === 'capability_warning') {
-      if (event.capability === 'tool_not_run') unverifiedToolRef.current = true;
-      setActivities(old => [
-        ...old,
-        { id: crypto.randomUUID(), role: 'status', text: String(event.message || '') },
-      ]);
-    } else if (type === 'compaction_completed') {
-      setStatus('上下文已压缩');
-      const saved = savedTokens(event);
-      setCompaction(old => ({
-        count: old.count + 1,
-        method: String(event.method || event.reason || ''),
-        savedTokens: saved,
-      }));
-      setActivities(old => [
-        ...old,
-        {
-          id: crypto.randomUUID(),
-          role: 'status',
-          text: compactionText(event),
-        },
-      ]);
-    } else if (type === 'provider_error') {
-      setStatus('推理服务异常');
-      setActivities(old => [
-        ...old,
-        {
-          id: crypto.randomUUID(),
-          role: 'status',
-          text: `推理异常：${String(event.message || '')}`,
-        },
-      ]);
-    } else if (type === 'loop_guard') {
-      setStatus(event.action === 'advice_only' ? '正在调整查询方法' : '已拦截无效重复调用');
-      setActivities(old => [
-        ...old,
-        { id: crypto.randomUUID(), role: 'status', text: loopGuardText(event) },
-      ]);
-    } else if (type === 'error') {
-      notify(event.message);
-      setActivities(old => [
-        ...old,
-        { id: crypto.randomUUID(), role: 'status', text: String(event.message) },
-      ]);
-    } else if (type === 'status') {
-      setStatus(String(event.text));
-    } else if (type === 'turn_completed') {
-      setRunning(false);
-      setQueueSince(null);
-      setStatus(
-        event.status === 'completed'
-          ? unverifiedToolRef.current
-            ? '需要核对'
-            : '回复已结束'
-          : event.status === 'interrupted'
-            ? '已停止'
-            : '执行失败',
-      );
-    }
-  }
-
-  function flushStreamEvents() {
-    if (pendingTimerRef.current !== null) clearTimeout(pendingTimerRef.current);
-    pendingTimerRef.current = null;
-    const events = pendingEventsRef.current;
-    pendingEventsRef.current = [];
-    for (const event of events) applyEvent(event);
-  }
-
-  function onEvent(event: Json) {
-    if (
-      event.type === 'text_delta' ||
-      event.type === 'reasoning_delta' ||
-      event.type === 'tool_output'
-    ) {
-      const last = pendingEventsRef.current.at(-1);
-      if (
-        last?.type === event.type &&
-        last.callId === event.callId &&
-        last.stream === event.stream
-      ) {
-        last.text = String(last.text || '') + String(event.text || '');
-      } else {
-        pendingEventsRef.current.push({ ...event });
-      }
-      if (pendingTimerRef.current === null) {
-        pendingTimerRef.current = setTimeout(flushStreamEvents, 32);
-      }
-      return;
-    }
-    flushStreamEvents();
-    applyEvent(event);
-  }
 
   async function addImages(chosenFiles: File[]) {
     if (!chosenFiles.length) return;
-    const binding = inspectorBindingRef.current;
     if (
       attachments.length + chosenFiles.length > 2 ||
       attachments.reduce((n, f) => n + f.size, 0) +
@@ -803,21 +572,29 @@ export default function App() {
             }),
         ),
       );
-      if (binding !== inspectorBindingRef.current) return;
-      setAttachments(old =>
-        old.length + added.length <= 2 &&
-        old.reduce((n, f) => n + f.size, 0) + added.reduce((n, f) => n + f.size, 0) <=
-          8 * 1024 * 1024
-          ? [...old, ...added]
-          : old,
-      );
+      if (!current && (workspace !== configRef.current.workspace || deviceId !== configRef.current.deviceId)) return;
+      updateConversation(chatKey, view => {
+        const all = [...view.attachments, ...added];
+        if (view.running || all.length > 2 || all.reduce((n, f) => n + f.size, 0) > 8 * 1024 * 1024) return view;
+        return { ...view, attachments: all };
+      });
     } catch (error) {
       notify(error);
     }
   }
 
+  async function interruptTurn(turn: RunningTurn) {
+    if (!turn.sessionId) return;
+    try {
+      await api('interrupt', { sessionId: turn.sessionId });
+    } catch (error) {
+      turn.stopRequested = false;
+      notify(error);
+    }
+  }
+
   async function send() {
-    if ((!input.trim() && attachments.length === 0) || bindingBusyRef.current) return;
+    if ((!input.trim() && attachments.length === 0) || running || bindingBusyRef.current || turns.current.has(chatKey)) return;
     if (!desktop) {
       notify('当前为界面预览。请启动 Gemma Harness 桌面应用来连接模型与执行工具。');
       return;
@@ -831,78 +608,152 @@ export default function App() {
       notify('请先选择推理服务中的模型');
       return;
     }
-    bindingBusyRef.current = true;
-    const text = input;
-    const images = attachments;
-    unverifiedToolRef.current = false;
-    resetPerformance();
+
+    const turn: RunningTurn = {
+      sessionId: current?.id, started: false, completed: false, stopRequested: false,
+    };
+    let key = chatKey;
+    turns.current.set(key, turn);
+    const nextDraft = current ? null : crypto.randomUUID();
+    setConversations(state => {
+      const previous = state.chats.get(chatKey) ?? emptyConversation;
+      const view: Conversation = {
+        ...previous,
+        activities: previous.activities ?? emptyActivities,
+        input: '',
+        attachments: [],
+        running: true,
+        status: '正在连接',
+        unverifiedTool: false,
+        usage: initialUsage(connection.contextLength || 8192),
+        metrics: null,
+        queueSince: null,
+        queueWaitMs: null,
+        compaction: { count: 0 },
+      };
+      return {
+        ...state,
+        draft: nextDraft && state.draft === chatKey ? nextDraft : state.draft,
+        chats: new Map(state.chats).set(chatKey, view),
+      };
+    });
     chatFollowRef.current = true;
     chatResetFollowRef.current = true;
     setChatAtBottom(true);
     historyAnchorRef.current = null;
     setHistoryStart(Math.max(0, activities.length - HISTORY_WINDOW));
-    setInput('');
-    setAttachments([]);
-    setRunning(true);
-    setStatus('正在连接');
+
+    const pending: Json[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+    function flushEvents() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      if (pending.length === 0) return;
+      const events = pending.splice(0);
+      updateConversation(key, view => events.reduce(applyConversationEvent, view));
+    }
+
+    function onEvent(event: Json) {
+      if (settled) return;
+      if (event.type === 'turn_completed') turn.completed = true;
+      if (!turn.started) {
+        turn.started = true;
+        if (turn.stopRequested && !turn.completed) void interruptTurn(turn);
+      }
+      if (event.type === 'turn_started') return;
+      if (event.type === 'text_delta' || event.type === 'reasoning_delta' || event.type === 'tool_output') {
+        const last = pending.at(-1);
+        if (last?.type === event.type && last.callId === event.callId && last.stream === event.stream) {
+          last.text = String(last.text || '') + String(event.text || '');
+        } else {
+          pending.push({ ...event });
+        }
+        if (timer === null) timer = setTimeout(flushEvents, 32);
+        return;
+      }
+      pending.push(event);
+      flushEvents();
+      if (
+        event.type === 'tool_completed' && String(event.name).startsWith('file_') &&
+        visibleBinding.current.workspace === workspace && visibleBinding.current.deviceId === deviceId
+      ) {
+        setFiles(null);
+        setDiffResult(null);
+      }
+    }
+
     try {
       let session = current;
       if (!session) {
-        session = await api<Session>('create_session');
-        metricBindingRef.current = metricKey(
-          session.id,
-          connection.id,
-          connection.contextLength,
-        );
-        const optimisticTitle =
-          session.title === '新会话'
-            ? text.trim()
-              ? text.trim().slice(0, 30)
-              : '图片消息'
-            : session.title;
-        const created = { ...session, title: optimisticTitle };
-        setCurrent(created);
-        setSessions(old => (old.some(s => s.id === created.id) ? old : [created, ...old]));
-        session = created;
+        const created = await api<Session>('create_session', { workspace, deviceId, connectionId: connection.id });
+        session = created.title === '新会话' && !turn.stopRequested
+          ? { ...created, title: input.trim() ? Array.from(input).slice(0, 30).join('') : '图片消息' }
+          : created;
+        const saved = session;
+        turns.current.delete(chatKey);
+        key = saved.id;
+        turn.sessionId = saved.id;
+        turns.current.set(key, turn);
+        setConversations(state => {
+          const chats = new Map(state.chats);
+          const previous = chats.get(chatKey) ?? emptyConversation;
+          chats.delete(chatKey);
+          chats.set(saved.id, { ...previous, session: saved });
+          return { ...state, selected: state.selected === chatKey ? saved.id : state.selected, chats };
+        });
+        sessionListRevision.current += 1;
+        setSessions(old => [saved, ...old.filter(item => item.id !== saved.id)]);
       }
-      setActivities(old => [
-        ...old,
-        {
-          id: crypto.randomUUID(),
-          role: 'user',
-          text,
-          images: images.length > 0 ? images.map(img => img.name) : undefined,
-        },
-      ]);
-      await stream(
-        session.id,
-        text,
-        onEvent,
-        images.map(image => image.dataUrl),
-      );
+      if (turn.stopRequested) {
+        pending.push({ type: 'turn_completed', status: 'interrupted' });
+        return;
+      }
+      const userMessage: Activity = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        text: input,
+        images: attachments.length > 0 ? attachments.map(image => image.name) : undefined,
+      };
+      updateConversation(key, view => ({
+        ...view, activities: [...(view.activities ?? emptyActivities), userMessage],
+      }));
+      await stream(session.id, input, onEvent, attachments.map(image => image.dataUrl));
+      if (!turn.completed) pending.push({ type: 'turn_completed', status: 'completed' });
     } catch (error) {
-      notify(error);
-      setStatus('执行失败');
+      if (!turn.stopRequested) notify(error);
+      if (!turn.completed) {
+        if (!turn.stopRequested) pending.push({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+        pending.push({ type: 'turn_completed', status: turn.stopRequested ? 'interrupted' : 'failed' });
+      }
     } finally {
-      bindingBusyRef.current = false;
-      flushStreamEvents();
-      setRunning(false);
-      setQueueSince(null);
-      setActivities(old =>
-        old.map(item => (item.running ? { ...item, running: false } : item)),
-      );
-      void refresh();
+      settled = true;
+      flushEvents();
+      turns.current.delete(key);
+      const finishedKey = key;
+      setConversations(state => {
+        const previous = state.chats.get(finishedKey);
+        if (!previous) return state;
+        const chats = new Map(state.chats);
+        chats.set(finishedKey, {
+          ...previous,
+          running: false,
+          queueSince: null,
+          activities: previous.activities?.map(item => item.running ? { ...item, running: false } : item) ?? null,
+        });
+        if (!previous.session && state.selected !== finishedKey) chats.delete(finishedKey);
+        return { ...state, chats };
+      });
+      if (turn.sessionId) void refresh(true);
     }
   }
 
   async function stop() {
-    if (!current) return;
-    setStatus('正在停止');
-    try {
-      await api('interrupt', { sessionId: current.id });
-    } catch (error) {
-      notify(error);
-    }
+    const turn = turns.current.get(chatKey);
+    if (!turn || turn.completed || turn.stopRequested) return;
+    turn.stopRequested = true;
+    updateConversation(chatKey, view => ({ ...view, status: '正在停止' }));
+    if (turn.started) await interruptTurn(turn);
   }
 
   async function inspect(kind: string, path?: string) {
@@ -1002,7 +853,7 @@ export default function App() {
   }
 
   async function runCommand() {
-    if (!command.trim() || bindingBusyRef.current) return;
+    if (!command.trim() || hasActiveWork()) return;
     if (command.trim() === 'clear') {
       setCommand('');
       setTerminal('');
@@ -1080,10 +931,11 @@ export default function App() {
   }
 
   function beginUpdateInstall(fromSettings: boolean): string | null {
-    if (bindingBusyRef.current) return '请先停止当前任务或终端命令，再安装更新。';
+    if (hasActiveWork()) return '请先停止运行中的任务或终端命令，再安装更新。';
     if (file && fileText !== file.text) return '请先保存正在编辑的文件，再安装更新。';
-    if (input || attachments.length || command) {
-      return '请先发送或清空未提交的消息、图片和终端命令。';
+    const unfinished = [...conversations.chats.values()].find(view => view.input || view.attachments.length || view.command);
+    if (unfinished) {
+      return `请先处理「${unfinished.session?.title || '新会话'}」中未提交的消息、图片或终端命令。`;
     }
     if (projectDialog || sessionDialog || (settings && !fromSettings)) {
       return '请先关闭设置或项目操作，再安装更新。';
@@ -1105,6 +957,21 @@ export default function App() {
   const update = useAppUpdates(beginUpdateInstall, endUpdateInstall);
   const contextLabel = `${Math.round(usage.context / 1024)}K`;
 
+  function setInput(input: string) {
+    updateConversation(chatKey, view => ({ ...view, input }));
+  }
+
+  function setCommand(command: string) {
+    updateConversation(chatKey, view => ({ ...view, command }));
+  }
+
+  function setTerminal(update: string | ((previous: string | null) => string)) {
+    updateConversation(chatKey, view => ({
+      ...view,
+      terminal: typeof update === 'string' ? update : update(view.terminal),
+    }));
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -1120,7 +987,8 @@ export default function App() {
         shortcut={shortcut}
         filter={filter}
         searchOpen={searchOpen}
-        busy={running || terminalBusy || projectBusy || restoreBusy}
+        busy={anyRunning || terminalBusy || projectBusy || restoreBusy}
+        runningChats={runningChats}
         onNewChat={startNewChat}
         onToggleSearch={toggleSearch}
         onFilterChange={setFilter}
@@ -1223,7 +1091,7 @@ export default function App() {
                       onCheckOperation={checkOperation}
                       onRestoreDeleted={restoreDeleted}
                       restoreDisabled={
-                        running || terminalBusy || projectBusy || restoreBusy
+                        anyRunning || terminalBusy || projectBusy || restoreBusy
                       }
                       key={item.id}
                     />
@@ -1239,14 +1107,16 @@ export default function App() {
               workspace={workspace}
               running={running}
               terminalBusy={terminalBusy}
-              projectBusy={projectBusy}
+              projectBusy={projectBusy || restoreBusy}
               status={status}
               queueSince={queueSince}
               chatAtBottom={chatAtBottom}
               onInputChange={setInput}
               onAddImages={addImages}
               onRemoveAttachment={index =>
-                setAttachments(old => old.filter((_, i) => i !== index))
+                updateConversation(chatKey, view => ({
+                  ...view, attachments: view.attachments.filter((_, i) => i !== index),
+                }))
               }
               onSelectWorkspace={() => void selectWorkspace()}
               onSend={send}
@@ -1298,13 +1168,14 @@ export default function App() {
 
         {terminalOpen && (
           <TerminalPanel
+            key={chatKey}
             terminal={terminal}
             command={command}
             deviceName={deviceName}
             workspace={workspace}
             terminalBusy={terminalBusy}
-            running={running}
-            projectBusy={projectBusy}
+            running={anyRunning}
+            projectBusy={projectBusy || restoreBusy}
             onCommandChange={setCommand}
             onRunCommand={runCommand}
             onStopCommand={() =>
@@ -1404,20 +1275,7 @@ export default function App() {
               void refresh();
               return;
             }
-            const selected = next.connections.find(
-              c => c.id === next.selectedConnectionId,
-            );
-            metricBindingRef.current = metricKey(
-              undefined,
-              selected?.id,
-              selected?.contextLength,
-            );
-            resetPerformance(selected?.contextLength || 8192);
-            setCurrent(null);
-            setActivities([]);
-            setHistoryStart(0);
-            chatFollowRef.current = true;
-            setChatAtBottom(true);
+            selectConversation(conversations.draft);
             setFiles(null);
             setDiffResult(null);
             void refresh();

@@ -6,8 +6,33 @@ export async function api<T = Json>(action: string, data: Json = {}): Promise<T>
   return invoke<T>('command', { request: { action, ...data } });
 }
 export async function stream(sessionId: string, input: string, event: (value: Json) => void, images: string[] = []) {
-  const onEvent = new Channel<Json>(); onEvent.onmessage = event;
-  return invoke('stream_turn', { sessionId, input, images, onEvent });
+  let endStream: () => void = () => {};
+  const drained = new Promise<void>(resolve => { endStream = resolve; });
+  const onEvent = new Channel<Json>(value => {
+    if (value.type === 'stream_ended') endStream();
+    else event(value);
+  });
+  const result = await invoke<{ error: string | null } | null>(
+    'stream_turn', { sessionId, input, images, onEvent },
+  );
+  if (result) {
+    // The command can resolve while the webview is still fetching large channel messages.
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        drained,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('会话更新未完整送达，请切换会话后重新打开该会话查看结果。')),
+            10000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (result.error) throw new Error(result.error);
+  }
 }
 export async function choosePath(directory = true): Promise<string | null> {
   if (!desktop) throw new Error('选择本地文件需要桌面应用');

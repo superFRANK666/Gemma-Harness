@@ -16,14 +16,6 @@ export function parentDir(path: string): string | null {
   return parts.join('/');
 }
 
-export function metricKey(
-  session: string | undefined,
-  connection: string | undefined,
-  context: number | undefined,
-) {
-  return `${session || 'new'}|${connection || ''}|${context || 8192}`;
-}
-
 export function savedTokens(event: Json): number | undefined {
   const direct = numberValue(event.tokensSaved) ?? numberValue(event.savedTokens);
   if (direct !== undefined) return direct;
