@@ -12,16 +12,23 @@ pub(crate) struct SseDecoder {
 
 impl SseDecoder {
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
-        self.pending.extend_from_slice(bytes);
         let mut events = Vec::new();
-        while let Some(pos) = self.pending.iter().position(|b| *b == b'\n') {
-            let mut line: Vec<u8> = self.pending.drain(..=pos).collect();
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            self.line(&line, &mut events)?;
+        let mut partial = std::mem::take(&mut self.pending);
+        for fragment in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let Some(end) = fragment.strip_suffix(b"\n") else {
+                partial.extend_from_slice(fragment);
+                break;
+            };
+            let line = if partial.is_empty() {
+                end
+            } else {
+                partial.extend_from_slice(end);
+                &partial
+            };
+            self.line(line.strip_suffix(b"\r").unwrap_or(line), &mut events)?;
+            partial.clear();
         }
+        self.pending = partial;
         if self.pending.len() + self.data.len() > MAX_EVENT_BYTES {
             bail!("SSE event exceeds 8 MiB");
         }

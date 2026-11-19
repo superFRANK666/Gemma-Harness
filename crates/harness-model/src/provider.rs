@@ -112,7 +112,7 @@ impl Provider {
         let loopback = is_loopback(&base);
         let mut client = Client::builder()
             .connect_timeout(Duration::from_secs(if loopback { 2 } else { 10 }))
-            .timeout(Duration::from_secs(600))
+            .read_timeout(Duration::from_secs(600))
             .redirect(reqwest::redirect::Policy::none());
         // Local inference must not be sent to an OS or environment HTTP proxy.
         // Remote providers retain the user's normal proxy configuration.
@@ -387,7 +387,8 @@ impl Provider {
         let messages = gemma4_messages.as_deref().unwrap_or(messages);
         if self.config.protocol == "responses" {
             let input = response_input(messages)?;
-            let mut body = json!({"model": self.config.model, "input": input, "stream": true, "store": false, "max_output_tokens": max_output_tokens});
+            let mut body = json!({"model": self.config.model, "stream": true, "store": false, "max_output_tokens": max_output_tokens});
+            body["input"] = Value::Array(input);
             if !tools.is_empty() {
                 body["tools"] = Value::Array(tools.iter().map(|tool| {
                     let parameters = normalize_tool_schema(&tool.parameters).with_context(|| format!("Invalid schema for tool {}", tool.name))?;
@@ -429,7 +430,8 @@ impl Provider {
                     }
                 }
             }
-            let mut body = json!({"model":self.config.model,"messages":wire_messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_output_tokens});
+            let mut body = json!({"model":self.config.model,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_output_tokens});
+            body["messages"] = wire_messages;
             if functiongemma_native {
                 body["stop"] = json!([functiongemma::RESPONSE_START]);
             }
