@@ -27,7 +27,7 @@ pub fn target_model_profile() -> ModelProfile {
         source_repository: "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic".into(),
         source_revision: "f5970e2eee74ef654b7ee97722b3e67a7ec6adda".into(),
         architecture_context_limit: 262144,
-        default_context_length: 8192,
+        default_context_length: crate::DEFAULT_MANAGED_CONTEXT_LENGTH,
         native_tool_format: "gemma4".into(),
         vision_requires_projector: true,
         identity_fingerprint: format!(

@@ -32,7 +32,7 @@ pub struct EngineConfig {
     pub gpu_layers: i32,
 }
 fn default_context() -> usize {
-    32768
+    harness_model::DEFAULT_MANAGED_CONTEXT_LENGTH
 }
 fn default_port() -> u16 {
     1235
@@ -205,7 +205,7 @@ impl Engine {
             let timeout = if status["phase"] == "unresponsive" {
                 10
             } else {
-                300
+                15 * 60
             };
             if started.elapsed() >= Duration::from_secs(timeout) {
                 bail!("等待本地模型就绪超时。请在设置 → 模型与推理中查看日志；检查可用内存、GGUF 和加载参数后重试。消息已保留，未发送生成请求。")

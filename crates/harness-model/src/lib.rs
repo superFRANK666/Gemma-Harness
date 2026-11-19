@@ -16,3 +16,5 @@ pub use profile::{context_budget, target_model_profile, ContextBudget, ModelProf
 pub use provider::Provider;
 pub use schema::normalize_tool_schema;
 pub use types::*;
+
+pub const DEFAULT_MANAGED_CONTEXT_LENGTH: usize = 32_768;
