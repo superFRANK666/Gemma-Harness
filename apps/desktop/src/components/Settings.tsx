@@ -45,9 +45,9 @@ const defaultEngine: EngineConfiguration = {
   modelPath: '',
   projectorPath: '',
   chatTemplatePath: '',
-  contextLength: 8192,
+  contextLength: 32768,
   port: 1235,
-  gpuLayers: 99,
+  gpuLayers: -1,
 };
 
 const tabs = [

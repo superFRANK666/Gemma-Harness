@@ -32,13 +32,13 @@ pub struct EngineConfig {
     pub gpu_layers: i32,
 }
 fn default_context() -> usize {
-    8192
+    32768
 }
 fn default_port() -> u16 {
     1235
 }
 fn default_gpu() -> i32 {
-    99
+    -1
 }
 
 pub struct Engine {

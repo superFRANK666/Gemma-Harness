@@ -23,7 +23,8 @@ export default function LocalModelSettings({ config, backend, busy, status, resu
         <div className="field-row"><label>计算后端<select value={backend} onChange={e => onBackendChange(e.target.value)}><option value="metal">Metal · Mac</option><option value="cuda">CUDA · NVIDIA</option><option value="vulkan">Vulkan · 兼容 GPU</option><option value="cpu">CPU</option></select></label><button className="secondary-button" onClick={onInstall}>{busy === 'install' ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}{config.binaryPath ? '重新安装引擎' : '安装引擎'}</button></div>
         <EnginePath field="binaryPath" label="llama-server 可执行文件" placeholder="安装引擎后自动填写，或选择已有版本" value={config.binaryPath} onChange={onChange} onPath={onPath} />
         <EnginePath field="chatTemplatePath" label="自定义聊天模板 · 可选" placeholder="留空使用 GGUF 内嵌模板" value={config.chatTemplatePath || ''} onChange={onChange} onPath={onPath} />
-        <div className="field-row"><label>GPU 层数<input type="number" min={-1} value={config.gpuLayers} onChange={e => onChange({ gpuLayers: Number(e.target.value) })} /></label><label>本机端口<input type="number" min={1024} max={65535} value={config.port} onChange={e => onChange({ port: Number(e.target.value) })} /></label></div>
+        <div className="field-row"><label>GPU 层数（−1 自动，0 仅 CPU）<input type="number" min={-1} value={config.gpuLayers} onChange={e => onChange({ gpuLayers: Number(e.target.value) })} /></label><label>本机端口<input type="number" min={1024} max={65535} value={config.port} onChange={e => onChange({ port: Number(e.target.value) })} /></label></div>
+        {config.gpuLayers === 0 && <button type="button" className="secondary-button" onClick={() => onChange({ gpuLayers: -1 })}>按可用显存自动分配 GPU 层</button>}
         <small>安装固定运行时 b12211，并核对 SHA256。选择自定义模板后将覆盖内嵌模板；启动会记录模板摘要，兼容性需单独诊断。</small>
       </details>
     </fieldset>

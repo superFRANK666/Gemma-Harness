@@ -4,7 +4,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 const MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;
@@ -269,13 +269,18 @@ impl MetadataReader {
         String::from_utf8(bytes).context("GGUF metadata string is not valid UTF-8")
     }
 
-    /// Streams skipped arrays/strings through a small fixed buffer, retaining only a metadata hash.
+    /// Hash tokenizer strings and arrays directly from the buffered file data.
     fn skip(&mut self, mut length: u64) -> Result<()> {
         self.check_bytes(length)?;
-        let mut scratch = [0u8; 8192];
         while length > 0 {
-            let count = length.min(scratch.len() as u64) as usize;
-            self.read(&mut scratch[..count])?;
+            let bytes = self.input.fill_buf()?;
+            if bytes.is_empty() {
+                bail!("Truncated GGUF metadata at byte {}", self.position);
+            }
+            let count = length.min(bytes.len() as u64) as usize;
+            self.fingerprint.update(&bytes[..count]);
+            self.input.consume(count);
+            self.position += count as u64;
             length -= count as u64;
         }
         Ok(())
